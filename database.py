@@ -141,3 +141,32 @@ def save_snapshot(work_id, stats, source="ao3_public"):
 
     connection.commit()
     connection.close()
+
+
+def get_snapshots_for_work(work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT
+            collected_at,
+            hits,
+            kudos,
+            comments,
+            public_bookmarks,
+            word_count,
+            chapters_published,
+            chapters_total,
+            subscriptions,
+            total_bookmarks,
+            comment_threads,
+            source
+        FROM snapshots
+        WHERE work_id = ?
+        ORDER BY collected_at DESC
+    """, (work_id,))
+
+    snapshots = cursor.fetchall()
+
+    connection.close()
+
+    return snapshots

@@ -4,6 +4,7 @@ from database import (
     get_all_works,
     update_work,
     save_snapshot,
+    get_snapshots_for_work,
 )
 
 from collector import fetch_work_stats
@@ -24,6 +25,91 @@ def list_works():
     return works
 
 
+def display_value(value):
+    if value is None:
+        return "—"
+
+    return value
+
+
+def view_snapshots():
+    works = list_works()
+
+    work_id = input(
+        "Enter the number of the work to view: "
+    ).strip()
+
+    selected_work = None
+
+    for work in works:
+        if str(work[0]) == work_id:
+            selected_work = work
+            break
+
+    if selected_work is None:
+        print("Work not found.")
+        print()
+        return
+
+    _, _, title, _ = selected_work
+
+    snapshots = get_snapshots_for_work(work_id)
+
+    print()
+    print(f'Snapshots for "{title}":')
+    print()
+
+    if not snapshots:
+        print("No snapshots recorded yet.")
+        print()
+        return
+
+    for snapshot in snapshots:
+        (
+            collected_at,
+            hits,
+            kudos,
+            comments,
+            public_bookmarks,
+            word_count,
+            chapters_published,
+            chapters_total,
+            subscriptions,
+            total_bookmarks,
+            comment_threads,
+            source,
+        ) = snapshot
+
+        print(f"Collected: {collected_at}")
+        print(f"  Hits: {display_value(hits)}")
+        print(f"  Kudos: {display_value(kudos)}")
+        print(f"  Comments: {display_value(comments)}")
+        print(
+            f"  Public bookmarks: "
+            f"{display_value(public_bookmarks)}"
+        )
+        print(f"  Words: {display_value(word_count)}")
+        print(
+            f"  Chapters: "
+            f"{display_value(chapters_published)}/"
+            f"{display_value(chapters_total)}"
+        )
+        print(
+            f"  Subscriptions: "
+            f"{display_value(subscriptions)}"
+        )
+        print(
+            f"  Total bookmarks: "
+            f"{display_value(total_bookmarks)}"
+        )
+        print(
+            f"  Comment threads: "
+            f"{display_value(comment_threads)}"
+        )
+        print(f"  Source: {source}")
+        print()
+
+
 def main():
     initialize_database()
 
@@ -35,7 +121,8 @@ def main():
         print("2. List works")
         print("3. Edit work")
         print("4. Fetch and save current stats")
-        print("5. Exit")
+        print("5. View snapshots")
+        print("6. Exit")
         print()
 
         choice = input("Choose an option: ").strip()
@@ -150,6 +237,9 @@ def main():
             print()
 
         elif choice == "5":
+            view_snapshots()
+
+        elif choice == "6":
             print("Goodbye.")
             break
 
