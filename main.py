@@ -4,6 +4,8 @@ from database import (
     get_all_works,
     update_work,
     get_snapshots_for_work,
+    get_collection_interval,
+    set_collection_interval,
 )
 
 from collection import collect_all_stats
@@ -109,6 +111,45 @@ def view_snapshots():
         print()
 
 
+def configure_collection_interval():
+    current_interval = get_collection_interval()
+
+    print(
+        f"Current automatic collection interval: "
+        f"{current_interval:g} hours"
+    )
+    print()
+
+    new_value = input(
+        "Enter a new interval in hours "
+        "(or press Enter to keep the current value): "
+    ).strip()
+
+    if not new_value:
+        print("Collection interval unchanged.")
+        print()
+        return
+
+    try:
+        hours = float(new_value)
+    except ValueError:
+        print("Please enter a number.")
+        print()
+        return
+
+    if hours <= 0:
+        print("Collection interval must be greater than 0.")
+        print()
+        return
+
+    set_collection_interval(hours)
+
+    print(
+        f"Collection interval set to {hours:g} hours."
+    )
+    print()
+
+
 def main():
     initialize_database()
 
@@ -121,7 +162,8 @@ def main():
         print("3. Edit work")
         print("4. Fetch and save current stats")
         print("5. View snapshots")
-        print("6. Exit")
+        print("6. Collection interval")
+        print("7. Exit")
         print()
 
         choice = input("Choose an option: ").strip()
@@ -193,6 +235,9 @@ def main():
             view_snapshots()
 
         elif choice == "6":
+            configure_collection_interval()
+
+        elif choice == "7":
             print("Goodbye.")
             break
 

@@ -41,8 +41,13 @@ def initialize_database():
         )
     """)
 
-    # Update older databases that were created before
-    # chapters_total was added to the snapshots table.
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )
+    """)
+
     cursor = connection.execute("PRAGMA table_info(snapshots)")
     columns = [row[1] for row in cursor.fetchall()]
 
@@ -51,6 +56,11 @@ def initialize_database():
             "ALTER TABLE snapshots "
             "ADD COLUMN chapters_total INTEGER"
         )
+
+    connection.execute("""
+        INSERT OR IGNORE INTO settings (key, value)
+        VALUES ('collection_interval_hours', '6')
+    """)
 
     connection.commit()
     connection.close()
@@ -170,3 +180,35 @@ def get_snapshots_for_work(work_id):
     connection.close()
 
     return snapshots
+
+
+def get_collection_interval():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'collection_interval_hours'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return 6
+
+    return float(row[0])
+
+
+def set_collection_interval(hours):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (key, value)
+        VALUES ('collection_interval_hours', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    """, (str(hours),))
+
+    connection.commit()
+    connection.close()
