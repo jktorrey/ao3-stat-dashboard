@@ -60,14 +60,29 @@ def add_work(ao3_work_id, title):
 def get_all_works():
     connection = sqlite3.connect(DATABASE_NAME)
 
-    cursor = connection.execute("""
-        SELECT ao3_work_id, title, url
-        FROM works
-        ORDER BY title
-    """)
+    cursor = connection.execute(
+        "SELECT id, ao3_work_id, title, url "
+        "FROM works "
+        "ORDER BY title"
+    )
 
     works = cursor.fetchall()
 
     connection.close()
 
     return works
+
+
+def update_work(work_id, ao3_work_id, title):
+    url = f"https://archiveofourown.org/works/{ao3_work_id}"
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        UPDATE works
+        SET ao3_work_id = ?, title = ?, url = ?
+        WHERE id = ?
+    """, (ao3_work_id, title, url, work_id))
+
+    connection.commit()
+    connection.close()
