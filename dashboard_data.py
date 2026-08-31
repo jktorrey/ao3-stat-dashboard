@@ -209,7 +209,7 @@ def get_latest_private_stats(work_id):
     return dataframe.iloc[0].to_dict()
 
 
-def get_24_hour_changes():
+def get_period_changes(hours):
     connection = sqlite3.connect(DATABASE_NAME)
 
     query = """
@@ -272,7 +272,7 @@ def get_24_hour_changes():
 
         cutoff = (
             current["collected_at"]
-            - pd.Timedelta(hours=24)
+            - pd.Timedelta(hours=hours)
         )
 
         baseline_candidates = history[
@@ -287,10 +287,10 @@ def get_24_hour_changes():
             ),
             "baseline_collected_at": None,
             "baseline_hours": None,
-            "hits_change_24h": None,
-            "kudos_change_24h": None,
-            "comments_change_24h": None,
-            "bookmarks_change_24h": None,
+            "hits_change": None,
+            "kudos_change": None,
+            "comments_change": None,
+            "bookmarks_change": None,
         }
 
         if not baseline_candidates.empty:
@@ -309,22 +309,22 @@ def get_24_hour_changes():
                 elapsed.total_seconds() / 3600
             )
 
-            record["hits_change_24h"] = (
+            record["hits_change"] = (
                 current["hits"]
                 - baseline["hits"]
             )
 
-            record["kudos_change_24h"] = (
+            record["kudos_change"] = (
                 current["kudos"]
                 - baseline["kudos"]
             )
 
-            record["comments_change_24h"] = (
+            record["comments_change"] = (
                 current["comments"]
                 - baseline["comments"]
             )
 
-            record["bookmarks_change_24h"] = (
+            record["bookmarks_change"] = (
                 current["public_bookmarks"]
                 - baseline["public_bookmarks"]
             )

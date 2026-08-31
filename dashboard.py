@@ -4,7 +4,7 @@ import streamlit as st
 from tzlocal import get_localzone
 
 from dashboard_data import (
-    get_24_hour_changes,
+    get_period_changes,
     get_latest_private_stats,
     get_overview_data,
     get_snapshot_count,
@@ -87,7 +87,11 @@ def display_timestamp(value):
     )
 
 
-def render_overview(overview, changes):
+def render_overview(
+    overview,
+    changes,
+    window_label,
+):
     work_count = get_work_count()
     snapshot_count = get_snapshot_count()
 
@@ -207,7 +211,10 @@ def render_overview(overview, changes):
 
     st.divider()
 
-    render_24_hour_changes(changes)
+    render_period_changes(
+        changes,
+        window_label,
+    )
 
     st.divider()
 
@@ -259,44 +266,49 @@ def render_overview(overview, changes):
     )
 
 
-def render_24_hour_changes(changes):
-    st.subheader("24-hour change")
+def render_period_changes(
+    changes,
+    window_label,
+):
+    st.subheader(
+        f"{window_label} change"
+    )
 
     st.caption(
         "Each work is compared with the newest "
-        "available snapshot at or before 24 hours "
-        "prior to its latest current observation."
+        "available snapshot at or before the "
+        f"{window_label.lower()} cutoff."
     )
 
     change_table = changes[
         [
             "title",
-            "hits_change_24h",
-            "kudos_change_24h",
-            "comments_change_24h",
-            "bookmarks_change_24h",
+            "hits_change",
+            "kudos_change",
+            "comments_change",
+            "bookmarks_change",
             "baseline_collected_at",
             "baseline_hours",
         ]
     ].copy()
 
     change_table["Hits Δ"] = (
-        change_table["hits_change_24h"]
+        change_table["hits_change"]
         .apply(display_change)
     )
 
     change_table["Kudos Δ"] = (
-        change_table["kudos_change_24h"]
+        change_table["kudos_change"]
         .apply(display_change)
     )
 
     change_table["Comments Δ"] = (
-        change_table["comments_change_24h"]
+        change_table["comments_change"]
         .apply(display_change)
     )
 
     change_table["Bookmarks Δ"] = (
-        change_table["bookmarks_change_24h"]
+        change_table["bookmarks_change"]
         .apply(display_change)
     )
 
@@ -305,7 +317,7 @@ def render_24_hour_changes(changes):
         .apply(display_timestamp)
     )
 
-    change_table["Window"] = (
+    change_table["Actual window"] = (
         change_table["baseline_hours"]
         .apply(
             lambda value: (
@@ -324,7 +336,7 @@ def render_24_hour_changes(changes):
             "Comments Δ",
             "Bookmarks Δ",
             "Baseline",
-            "Window",
+            "Actual window",
         ]
     ]
 
@@ -350,15 +362,15 @@ def render_24_hour_changes(changes):
 
     if available < total:
         st.caption(
-            f"24-hour baselines are currently "
-            f"available for {available} of "
-            f"{total} works."
+            f"A {window_label.lower()} baseline "
+            f"is currently available for "
+            f"{available} of {total} works."
         )
-
 
 def render_work_detail(
     overview,
     changes,
+    window_label,
 ):
     st.divider()
 
@@ -414,9 +426,7 @@ def render_work_detail(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row[
-                        "hits_change_24h"
-                    ]
+                    change_row["hits_change"]
                 )
             ),
         )
@@ -431,9 +441,7 @@ def render_work_detail(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row[
-                        "kudos_change_24h"
-                    ]
+                    change_row["kudos_change"]
                 )
             ),
         )
@@ -448,9 +456,7 @@ def render_work_detail(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row[
-                        "comments_change_24h"
-                    ]
+                    change_row["comments_change"]
                 )
             ),
         )
@@ -468,11 +474,16 @@ def render_work_detail(
                 if change_row is None
                 else metric_delta(
                     change_row[
-                        "bookmarks_change_24h"
+                        "bookmarks_change"
                     ]
                 )
             ),
         )
+
+    st.caption(
+        f"Changes shown for the selected "
+        f"{window_label.lower()} window."
+    )
 
     public5, public6 = st.columns(2)
 
@@ -780,16 +791,39 @@ def main():
     )
 
     overview = get_overview_data()
-    changes = get_24_hour_changes()
+
+    window_options = {
+        "24 hours": 24,
+        "7 days": 24 * 7,
+        "30 days": 24 * 30,
+    }
+
+    window_label = st.radio(
+        "Change window",
+        options=list(
+            window_options.keys()
+        ),
+        horizontal=True,
+    )
+
+    window_hours = (
+        window_options[window_label]
+    )
+
+    changes = get_period_changes(
+        window_hours
+    )
 
     render_overview(
         overview,
         changes,
+        window_label,
     )
 
     render_work_detail(
         overview,
         changes,
+        window_label,
     )
 
 
