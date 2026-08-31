@@ -297,3 +297,181 @@ def snapshot_exists(work_id, collected_at):
     connection.close()
 
     return exists
+
+
+def find_redundant_snapshots():
+    connection = sqlite3.connect(DATABASE_NAME)
+    connection.row_factory = sqlite3.Row
+
+    cursor = connection.execute("""
+        SELECT
+            snapshots.id AS snapshot_id,
+            snapshots.work_id,
+            works.title,
+            snapshots.collected_at,
+            snapshots.hits,
+            snapshots.kudos,
+            snapshots.comments,
+            snapshots.public_bookmarks,
+            snapshots.word_count,
+            snapshots.chapters_published,
+            snapshots.chapters_total,
+            snapshots.subscriptions,
+            snapshots.total_bookmarks,
+            snapshots.comment_threads,
+            snapshots.source
+        FROM snapshots
+        JOIN works
+            ON works.id = snapshots.work_id
+        ORDER BY
+            snapshots.work_id,
+            snapshots.collected_at,
+            snapshots.id
+    """)
+
+    rows = cursor.fetchall()
+    connection.close()
+
+    stat_fields = (
+        "hits",
+        "kudos",
+        "comments",
+        "public_bookmarks",
+        "word_count",
+        "chapters_published",
+        "chapters_total",
+        "subscriptions",
+        "total_bookmarks",
+        "comment_threads",
+    )
+
+    redundant = []
+
+    previous_stats = {}
+    previous_keeper = {}
+
+    for row in rows:
+        work_id = row["work_id"]
+
+        current_stats = tuple(
+            row[field]
+            for field in stat_fields
+        )
+
+        if (
+            work_id not in previous_stats
+            or current_stats != previous_stats[work_id]
+        ):
+            previous_stats[work_id] = current_stats
+            previous_keeper[work_id] = row
+            continue
+
+        keeper = previous_keeper[work_id]
+
+        redundant.append({
+            "snapshot_id": row["snapshot_id"],
+            "work_id": work_id,
+            "title": row["title"],
+            "keep_collected_at": keeper["collected_at"],
+            "keep_source": keeper["source"],
+            "remove_collected_at": row["collected_at"],
+            "remove_source": row["source"],
+        })
+
+    return redundant
+
+
+def delete_snapshots(snapshot_ids):
+    if not snapshot_ids:
+        return 0
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.executemany(
+        "DELETE FROM snapshots WHERE id = ?",
+        [(snapshot_id,) for snapshot_id in snapshot_ids],
+    )
+
+    connection.commit()
+    connection.close()
+
+    return len(snapshot_ids)
+
+
+def get_null_stat_counts():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    stat_fields = (
+        "hits",
+        "kudos",
+        "comments",
+        "public_bookmarks",
+        "word_count",
+        "chapters_published",
+        "chapters_total",
+        "subscriptions",
+        "total_bookmarks",
+        "comment_threads",
+    )
+
+    counts = {}
+
+    for field in stat_fields:
+        cursor = connection.execute(
+            f"SELECT COUNT(*) FROM snapshots "
+            f"WHERE {field} IS NULL"
+        )
+
+        counts[field] = cursor.fetchone()[0]
+
+    connection.close()
+
+    return counts
+
+
+def replace_null_stats_with_zero():
+    counts = get_null_stat_counts()
+    values_replaced = sum(counts.values())
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT COUNT(*)
+        FROM snapshots
+        WHERE
+            hits IS NULL
+            OR kudos IS NULL
+            OR comments IS NULL
+            OR public_bookmarks IS NULL
+            OR word_count IS NULL
+            OR chapters_published IS NULL
+            OR chapters_total IS NULL
+            OR subscriptions IS NULL
+            OR total_bookmarks IS NULL
+            OR comment_threads IS NULL
+    """)
+
+    rows_updated = cursor.fetchone()[0]
+
+    connection.execute("""
+        UPDATE snapshots
+        SET
+            hits = COALESCE(hits, 0),
+            kudos = COALESCE(kudos, 0),
+            comments = COALESCE(comments, 0),
+            public_bookmarks = COALESCE(public_bookmarks, 0),
+            word_count = COALESCE(word_count, 0),
+            chapters_published = COALESCE(chapters_published, 0),
+            chapters_total = COALESCE(chapters_total, 0),
+            subscriptions = COALESCE(subscriptions, 0),
+            total_bookmarks = COALESCE(total_bookmarks, 0),
+            comment_threads = COALESCE(comment_threads, 0)
+    """)
+
+    connection.commit()
+    connection.close()
+
+    return {
+        "rows_updated": rows_updated,
+        "values_replaced": values_replaced,
+    }

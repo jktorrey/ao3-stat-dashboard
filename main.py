@@ -9,6 +9,8 @@ from database import (
     get_snapshots_for_work,
     get_collection_interval,
     set_collection_interval,
+    find_redundant_snapshots,
+    delete_snapshots,
 )
 
 from collection import collect_all_stats
@@ -329,6 +331,167 @@ def configure_collection_interval():
     print()
 
 
+def cleanup_database():
+    redundant = find_redundant_snapshots()
+
+    print("Database cleanup")
+    print()
+
+    if not redundant:
+        print("No redundant snapshots found.")
+        print()
+        return
+
+    print(
+        f"Found {len(redundant)} redundant "
+        f"snapshot(s)."
+    )
+    print()
+
+    current_title = None
+
+    for item in redundant:
+        if item["title"] != current_title:
+            current_title = item["title"]
+
+            print(current_title)
+
+        print(
+            f"  KEEP:   "
+            f"{item['keep_collected_at']} "
+            f"[{item['keep_source']}]"
+        )
+
+        print(
+            f"  REMOVE: "
+            f"{item['remove_collected_at']} "
+            f"[{item['remove_source']}]"
+        )
+
+        print()
+
+    print(
+        "Only snapshots whose statistics are "
+        "identical to the previous snapshot "
+        "will be removed."
+    )
+
+    print(
+        "The earliest snapshot in each "
+        "unchanged run will be kept."
+    )
+
+    print()
+
+    confirmation = input(
+        "Type DELETE to remove these snapshots, "
+        "or press Enter to cancel: "
+    ).strip()
+
+    if confirmation != "DELETE":
+        print()
+        print("Cleanup cancelled.")
+        print()
+        return
+
+    snapshot_ids = [
+        item["snapshot_id"]
+        for item in redundant
+    ]
+
+    deleted_count = delete_snapshots(
+        snapshot_ids
+    )
+
+    print()
+    print(
+        f"Cleanup complete. "
+        f"Deleted {deleted_count} "
+        f"redundant snapshot(s)."
+    )
+    print()
+
+
+def normalize_null_stats():
+    from database import (
+        get_null_stat_counts,
+        replace_null_stats_with_zero,
+    )
+
+    counts = get_null_stat_counts()
+
+    total_nulls = sum(counts.values())
+
+    print("NULL value cleanup")
+    print()
+
+    if total_nulls == 0:
+        print("No NULL statistic values found.")
+        print()
+        return
+
+    print(
+        f"Found {total_nulls} NULL statistic "
+        f"value(s):"
+    )
+    print()
+
+    labels = {
+        "hits": "Hits",
+        "kudos": "Kudos",
+        "comments": "Comments",
+        "public_bookmarks": "Public bookmarks",
+        "word_count": "Word count",
+        "chapters_published": "Chapters published",
+        "chapters_total": "Total chapters",
+        "subscriptions": "Subscriptions",
+        "total_bookmarks": "Total bookmarks",
+        "comment_threads": "Comment threads",
+    }
+
+    for field, label in labels.items():
+        count = counts[field]
+
+        if count:
+            print(f"  {label}: {count}")
+
+    print()
+    print(
+        "Every NULL statistic listed above "
+        "will be changed to 0."
+    )
+    print(
+        "This cannot distinguish between "
+        "\"unknown\" and a true zero afterward."
+    )
+    print()
+
+    confirmation = input(
+        "Type ZERO to make these changes, "
+        "or press Enter to cancel: "
+    ).strip()
+
+    if confirmation != "ZERO":
+        print()
+        print("NULL cleanup cancelled.")
+        print()
+        return
+
+    result = replace_null_stats_with_zero()
+
+    print()
+    print("NULL cleanup complete.")
+    print(
+        f"  Snapshots updated: "
+        f"{result['rows_updated']}"
+    )
+    print(
+        f"  NULL values changed to 0: "
+        f"{result['values_replaced']}"
+    )
+    print()
+
+
 def main():
     initialize_database()
 
@@ -344,7 +507,9 @@ def main():
         print("6. Import historical CSV")
         print("7. View snapshots")
         print("8. Collection interval")
-        print("9. Exit")
+        print("9. Database cleanup")
+        print("10. Change NULL stats to 0")
+        print("11. Exit")
         print()
 
         choice = input(
@@ -442,6 +607,12 @@ def main():
             configure_collection_interval()
 
         elif choice == "9":
+            cleanup_database()
+
+        elif choice == "10":
+            normalize_null_stats()
+
+        elif choice == "11":
             print("Goodbye.")
             break
 
