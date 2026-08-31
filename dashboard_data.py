@@ -207,3 +207,128 @@ def get_latest_private_stats(work_id):
         return None
 
     return dataframe.iloc[0].to_dict()
+
+
+def get_24_hour_changes():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    query = """
+        SELECT
+            snapshots.id AS snapshot_id,
+            snapshots.work_id,
+            works.title,
+            snapshots.collected_at,
+            snapshots.hits,
+            snapshots.kudos,
+            snapshots.comments,
+            snapshots.public_bookmarks,
+            snapshots.source
+        FROM snapshots
+        JOIN works
+            ON works.id = snapshots.work_id
+        ORDER BY
+            snapshots.work_id,
+            snapshots.collected_at,
+            snapshots.id
+    """
+
+    dataframe = pd.read_sql_query(
+        query,
+        connection,
+    )
+
+    connection.close()
+
+    if dataframe.empty:
+        return dataframe
+
+    dataframe["collected_at"] = pd.to_datetime(
+        dataframe["collected_at"],
+        format="mixed",
+        utc=True,
+    )
+
+    records = []
+
+    for work_id, history in dataframe.groupby(
+        "work_id",
+        sort=False,
+    ):
+        history = history.sort_values(
+            by=[
+                "collected_at",
+                "snapshot_id",
+            ]
+        )
+
+        public_history = history[
+            history["source"] == "ao3_public"
+        ]
+
+        if not public_history.empty:
+            current = public_history.iloc[-1]
+        else:
+            current = history.iloc[-1]
+
+        cutoff = (
+            current["collected_at"]
+            - pd.Timedelta(hours=24)
+        )
+
+        baseline_candidates = history[
+            history["collected_at"] <= cutoff
+        ]
+
+        record = {
+            "work_id": work_id,
+            "title": current["title"],
+            "current_collected_at": (
+                current["collected_at"]
+            ),
+            "baseline_collected_at": None,
+            "baseline_hours": None,
+            "hits_change_24h": None,
+            "kudos_change_24h": None,
+            "comments_change_24h": None,
+            "bookmarks_change_24h": None,
+        }
+
+        if not baseline_candidates.empty:
+            baseline = baseline_candidates.iloc[-1]
+
+            elapsed = (
+                current["collected_at"]
+                - baseline["collected_at"]
+            )
+
+            record["baseline_collected_at"] = (
+                baseline["collected_at"]
+            )
+
+            record["baseline_hours"] = (
+                elapsed.total_seconds() / 3600
+            )
+
+            record["hits_change_24h"] = (
+                current["hits"]
+                - baseline["hits"]
+            )
+
+            record["kudos_change_24h"] = (
+                current["kudos"]
+                - baseline["kudos"]
+            )
+
+            record["comments_change_24h"] = (
+                current["comments"]
+                - baseline["comments"]
+            )
+
+            record["bookmarks_change_24h"] = (
+                current["public_bookmarks"]
+                - baseline["public_bookmarks"]
+            )
+
+        records.append(record)
+
+    return pd.DataFrame(records)
