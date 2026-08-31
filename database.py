@@ -1,8 +1,9 @@
 import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 
-DATABASE_NAME = "ao3_stats.db"
+DATABASE_NAME = Path(__file__).resolve().parent / "ao3_stats.db"
 
 
 def initialize_database():
@@ -209,6 +210,41 @@ def set_collection_interval(hours):
         VALUES ('collection_interval_hours', ?)
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
     """, (str(hours),))
+
+    connection.commit()
+    connection.close()
+
+
+def get_last_scheduled_collection():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'last_scheduled_collection'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return datetime.fromisoformat(row[0])
+
+
+def set_last_scheduled_collection(timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now(timezone.utc)
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (key, value)
+        VALUES ('last_scheduled_collection', ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    """, (timestamp.isoformat(),))
 
     connection.commit()
     connection.close()
