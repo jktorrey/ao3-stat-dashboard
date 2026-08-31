@@ -1,6 +1,7 @@
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from tzlocal import get_localzone
 
 from dashboard_data import (
     get_latest_private_stats,
@@ -18,6 +19,16 @@ st.set_page_config(
 )
 
 
+LOCAL_TIMEZONE = get_localzone()
+
+
+SOURCE_LABELS = {
+    "ao3_public": "Live AO3",
+    "manual": "Manual entry",
+    "csv_import": "Historical CSV",
+}
+
+
 def display_number(value):
     if pd.isna(value):
         return "—"
@@ -25,11 +36,41 @@ def display_number(value):
     return f"{int(value):,}"
 
 
+def display_source(source):
+    return SOURCE_LABELS.get(
+        source,
+        source,
+    )
+
+
+def display_timestamp(value):
+    if value is None or pd.isna(value):
+        return "—"
+
+    timestamp = pd.to_datetime(
+        value,
+        format="mixed",
+        utc=True,
+    )
+
+    timestamp = timestamp.tz_convert(
+        LOCAL_TIMEZONE
+    )
+
+    return timestamp.strftime(
+        "%b %d, %Y %I:%M %p %Z"
+    )
+
+
 st.title("AO3 Stats Dashboard")
 
 st.caption(
     "Historical statistics for tracked "
     "Archive of Our Own works."
+)
+
+st.caption(
+    f"Times shown in {LOCAL_TIMEZONE}."
 )
 
 
@@ -165,6 +206,23 @@ st.dataframe(
     table_data,
     hide_index=True,
     use_container_width=True,
+    column_config={
+        "Hits": st.column_config.NumberColumn(
+            format="%d"
+        ),
+        "Kudos": st.column_config.NumberColumn(
+            format="%d"
+        ),
+        "Comments": st.column_config.NumberColumn(
+            format="%d"
+        ),
+        "Bookmarks": st.column_config.NumberColumn(
+            format="%d"
+        ),
+        "Words": st.column_config.NumberColumn(
+            format="%d"
+        ),
+    },
 )
 
 
@@ -209,6 +267,15 @@ figure = px.bar(
 figure.update_layout(
     yaxis_title=None,
     xaxis_title="Hits",
+)
+
+
+figure.update_traces(
+    hovertemplate=(
+        "<b>%{y}</b><br>"
+        "Hits: %{x:,}"
+        "<extra></extra>"
+    )
 )
 
 
@@ -281,12 +348,14 @@ with public4:
     )
 
 
-public5, public6, public7 = st.columns(3)
+public5, public6 = st.columns(2)
 
 with public5:
     st.metric(
         "Words",
-        display_number(selected_row["word_count"]),
+        display_number(
+            selected_row["word_count"]
+        ),
     )
 
 with public6:
@@ -303,13 +372,12 @@ with public6:
         f"{chapters_published}/{chapters_total}",
     )
 
-with public7:
-    public_timestamp = selected_row["collected_at"]
 
-    st.metric(
-        "Latest public snapshot",
-        str(public_timestamp),
-    )
+st.caption(
+    "Current public observation: "
+    f"{display_timestamp(selected_row['collected_at'])} "
+    f"• {display_source(selected_row['source'])}"
+)
 
 
 st.subheader("Logged-in statistics")
@@ -355,8 +423,8 @@ else:
 
     st.caption(
         "Latest logged-in observation: "
-        f"{private_stats['collected_at']} "
-        f"({private_stats['source']})"
+        f"{display_timestamp(private_stats['collected_at'])} "
+        f"• {display_source(private_stats['source'])}"
     )
 
 
@@ -369,6 +437,13 @@ st.subheader("Historical growth")
 history = get_work_history(
     selected_work_id
 )
+
+
+if not history.empty:
+    history["collected_at"] = (
+        history["collected_at"]
+        .dt.tz_convert(LOCAL_TIMEZONE)
+    )
 
 
 metric_fields = {
@@ -440,7 +515,14 @@ else:
 
         metric_history["Metric"] = metric_label
 
-        chart_frames.append(metric_history)
+        metric_history["Source"] = (
+            metric_history["source"]
+            .map(display_source)
+        )
+
+        chart_frames.append(
+            metric_history
+        )
 
 
     historical_chart_data = pd.concat(
@@ -455,13 +537,13 @@ else:
         y="value",
         color="Metric",
         markers=True,
-        hover_data=[
-            "source",
-        ],
+        hover_data={
+            "Source": True,
+            "source": False,
+        },
         labels={
             "collected_at": "Date",
             "value": "Value",
-            "source": "Source",
         },
     )
 
@@ -472,9 +554,15 @@ else:
 
 
     historical_figure.update_layout(
-        xaxis_title="Date",
+        xaxis_title=None,
         yaxis_title=None,
         hovermode="x unified",
+    )
+
+
+    historical_figure.update_xaxes(
+        tickformat="%b %d",
+        hoverformat="%b %d, %Y %I:%M %p",
     )
 
 
@@ -486,7 +574,7 @@ else:
 
     st.caption(
         "Historical values use a stepped line "
-        "because the database records observations "
+        "because snapshots record observations "
         "at specific points in time rather than "
         "continuous changes between observations."
     )
