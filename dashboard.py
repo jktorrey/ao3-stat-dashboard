@@ -113,6 +113,30 @@ def render_overview(
         .sum()
     )
 
+    total_hits_change = int(
+        changes["hits_change"]
+        .fillna(0)
+        .sum()
+    )
+
+    total_kudos_change = int(
+        changes["kudos_change"]
+        .fillna(0)
+        .sum()
+    )
+
+    total_comments_change = int(
+        changes["comments_change"]
+        .fillna(0)
+        .sum()
+    )
+
+    total_bookmarks_change = int(
+        changes["bookmarks_change"]
+        .fillna(0)
+        .sum()
+    )
+
     st.subheader("Overview")
 
     column1, column2, column3 = st.columns(3)
@@ -153,6 +177,62 @@ def render_overview(
         st.metric(
             "Historical snapshots",
             f"{snapshot_count:,}",
+        )
+
+    st.divider()
+
+    st.subheader(
+        f"Growth in the last {window_label}"
+    )
+
+    growth1, growth2, growth3, growth4 = (
+        st.columns(4)
+    )
+
+    with growth1:
+        st.metric(
+            "Hits gained",
+            display_change(
+                total_hits_change
+            ),
+        )
+
+    with growth2:
+        st.metric(
+            "Kudos gained",
+            display_change(
+                total_kudos_change
+            ),
+        )
+
+    with growth3:
+        st.metric(
+            "Comments gained",
+            display_change(
+                total_comments_change
+            ),
+        )
+
+    with growth4:
+        st.metric(
+            "Bookmarks gained",
+            display_change(
+                total_bookmarks_change
+            ),
+        )
+
+    available = (
+        changes["baseline_collected_at"]
+        .notna()
+        .sum()
+    )
+
+    if available < len(changes):
+        st.caption(
+            f"These totals include the "
+            f"{available} of {len(changes)} works "
+            f"with a {window_label.lower()} "
+            f"baseline available."
         )
 
     st.divider()
@@ -218,7 +298,69 @@ def render_overview(
 
     st.divider()
 
-    st.subheader("Hits by work")
+    st.subheader(
+        f"Hits gained by work — {window_label}"
+    )
+
+    growth_chart_data = changes[
+        [
+            "title",
+            "hits_change",
+        ]
+    ].copy()
+
+    growth_chart_data = (
+        growth_chart_data.dropna(
+            subset=["hits_change"]
+        )
+    )
+
+    growth_chart_data = (
+        growth_chart_data.sort_values(
+            by="hits_change",
+            ascending=True,
+        )
+    )
+
+    if growth_chart_data.empty:
+        st.info(
+            "No works currently have enough "
+            "historical data for this window."
+        )
+
+    else:
+        growth_figure = px.bar(
+            growth_chart_data,
+            x="hits_change",
+            y="title",
+            orientation="h",
+            labels={
+                "hits_change": "Hits gained",
+                "title": "Work",
+            },
+        )
+
+        growth_figure.update_layout(
+            yaxis_title=None,
+            xaxis_title="Hits gained",
+        )
+
+        growth_figure.update_traces(
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Hits gained: %{x:+,}"
+                "<extra></extra>"
+            )
+        )
+
+        st.plotly_chart(
+            growth_figure,
+            use_container_width=True,
+        )
+
+    st.divider()
+
+    st.subheader("Total hits by work")
 
     chart_data = overview[
         [
