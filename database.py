@@ -112,8 +112,17 @@ def update_work(work_id, ao3_work_id, title):
     connection.close()
 
 
-def save_snapshot(work_id, stats, source="ao3_public"):
-    collected_at = datetime.now(timezone.utc).isoformat()
+def save_snapshot(
+    work_id,
+    stats,
+    source="ao3_public",
+    collected_at=None,
+):
+    if collected_at is None:
+        collected_at = datetime.now(timezone.utc)
+
+    if isinstance(collected_at, datetime):
+        collected_at = collected_at.isoformat()
 
     connection = sqlite3.connect(DATABASE_NAME)
 
@@ -248,3 +257,43 @@ def set_last_scheduled_collection(timestamp=None):
 
     connection.commit()
     connection.close()
+
+
+def get_work_by_ao3_id(ao3_work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT id, ao3_work_id, title, url
+        FROM works
+        WHERE ao3_work_id = ?
+    """, (ao3_work_id,))
+
+    work = cursor.fetchone()
+
+    connection.close()
+
+    return work
+
+
+def snapshot_exists(work_id, collected_at):
+    if isinstance(collected_at, datetime):
+        collected_at = collected_at.isoformat()
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT 1
+        FROM snapshots
+        WHERE work_id = ?
+          AND collected_at = ?
+        LIMIT 1
+    """, (
+        work_id,
+        collected_at,
+    ))
+
+    exists = cursor.fetchone() is not None
+
+    connection.close()
+
+    return exists
