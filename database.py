@@ -41,3 +41,17 @@ def initialize_database():
 
     connection.commit()
     connection.close()
+
+
+def add_work(ao3_work_id, title):
+    url = f"https://archiveofourown.org/works/{ao3_work_id}"
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO works (ao3_work_id, title, url)
+        VALUES (?, ?, ?)
+    """, (ao3_work_id, title, url))
+
+    connection.commit()
+    connection.close()
