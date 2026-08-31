@@ -55,3 +55,19 @@ def add_work(ao3_work_id, title):
 
     connection.commit()
     connection.close()
+
+
+def get_all_works():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT ao3_work_id, title, url
+        FROM works
+        ORDER BY title
+    """)
+
+    works = cursor.fetchall()
+
+    connection.close()
+
+    return works
