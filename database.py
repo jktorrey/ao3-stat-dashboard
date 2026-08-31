@@ -16,5 +16,28 @@ def initialize_database():
         )
     """)
 
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY,
+            work_id INTEGER NOT NULL,
+            collected_at TEXT NOT NULL,
+
+            hits INTEGER,
+            kudos INTEGER,
+            comments INTEGER,
+            public_bookmarks INTEGER,
+            word_count INTEGER,
+            chapters_published INTEGER,
+
+            subscriptions INTEGER,
+            total_bookmarks INTEGER,
+            comment_threads INTEGER,
+
+            source TEXT NOT NULL,
+
+            FOREIGN KEY (work_id) REFERENCES works(id)
+        )
+    """)
+
     connection.commit()
     connection.close()
