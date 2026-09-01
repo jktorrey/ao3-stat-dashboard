@@ -15,6 +15,8 @@ from database import (
     replace_null_stats_with_zero,
     add_event,
     get_events_for_work,
+    update_event,
+    delete_event,
 )
 
 from collection import collect_all_stats
@@ -672,6 +674,387 @@ def view_work_events():
         print()
 
 
+def select_work_event(
+    work_id,
+    title,
+    prompt,
+):
+    events = get_events_for_work(work_id)
+
+    if not events:
+        print()
+        print(
+            f'No events recorded for "{title}".'
+        )
+        print()
+        return None
+
+    labels = {
+        "work_published": "Work published",
+        "chapter_published": "Chapter published",
+        "work_completed": "Work completed",
+        "note": "Note",
+    }
+
+    print()
+    print(f'Events for "{title}":')
+    print()
+
+    for index, event in enumerate(
+        events,
+        start=1,
+    ):
+        (
+            event_id,
+            occurred_at,
+            event_type,
+            chapter_number,
+            description,
+        ) = event
+
+        label = labels.get(
+            event_type,
+            event_type,
+        )
+
+        if chapter_number is not None:
+            label += (
+                f" — Chapter {chapter_number}"
+            )
+
+        print(
+            f"{index}. {label}"
+        )
+        print(
+            f"   {occurred_at}"
+        )
+
+        if description:
+            print(
+                f"   {description}"
+            )
+
+    print()
+
+    choice = input(prompt).strip()
+
+    try:
+        choice_number = int(choice)
+
+    except ValueError:
+        print("Invalid selection.")
+        print()
+        return None
+
+    if not (
+        1
+        <= choice_number
+        <= len(events)
+    ):
+        print("Invalid selection.")
+        print()
+        return None
+
+    return events[choice_number - 1]
+
+
+def edit_work_event():
+    selected_work = select_work(
+        "Enter the number of the work: "
+    )
+
+    if selected_work is None:
+        return
+
+    work_id, _, title, _ = selected_work
+
+    selected_event = select_work_event(
+        work_id,
+        title,
+        "Enter the number of the event "
+        "to edit: ",
+    )
+
+    if selected_event is None:
+        return
+
+    (
+        event_id,
+        current_occurred_at,
+        current_event_type,
+        current_chapter_number,
+        current_description,
+    ) = selected_event
+
+    event_labels = {
+        "work_published": "Work published",
+        "chapter_published": "Chapter published",
+        "work_completed": "Work completed",
+        "note": "Note",
+    }
+
+    print()
+    print("Press Enter to keep a value.")
+    print()
+
+    print(
+        "1. Work published"
+    )
+    print(
+        "2. Chapter published"
+    )
+    print(
+        "3. Work completed"
+    )
+    print(
+        "4. Note"
+    )
+    print()
+
+    event_types = {
+        "1": "work_published",
+        "2": "chapter_published",
+        "3": "work_completed",
+        "4": "note",
+    }
+
+    current_label = event_labels.get(
+        current_event_type,
+        current_event_type,
+    )
+
+    event_choice = input(
+        f"Event type "
+        f"[{current_label}]: "
+    ).strip()
+
+    if event_choice:
+        if event_choice not in event_types:
+            print("Invalid event type.")
+            print()
+            return
+
+        new_event_type = event_types[
+            event_choice
+        ]
+
+    else:
+        new_event_type = (
+            current_event_type
+        )
+
+    timestamp_value = input(
+        f"Event date/time "
+        f"[{current_occurred_at}]: "
+    ).strip()
+
+    if timestamp_value:
+        try:
+            new_occurred_at = (
+                datetime.fromisoformat(
+                    timestamp_value
+                )
+            )
+
+            if new_occurred_at.tzinfo is None:
+                local_timezone = (
+                    datetime.now()
+                    .astimezone()
+                    .tzinfo
+                )
+
+                new_occurred_at = (
+                    new_occurred_at.replace(
+                        tzinfo=local_timezone
+                    )
+                )
+
+            new_occurred_at = (
+                new_occurred_at.astimezone(
+                    timezone.utc
+                )
+            )
+
+        except ValueError:
+            print(
+                "Invalid date/time. "
+                "Use something like "
+                "2026-08-30 21:15."
+            )
+            print()
+            return
+
+    else:
+        new_occurred_at = (
+            current_occurred_at
+        )
+
+    if (
+        new_event_type
+        == "chapter_published"
+    ):
+        current_chapter_display = (
+            current_chapter_number
+            if current_chapter_number
+            is not None
+            else ""
+        )
+
+        chapter_value = input(
+            f"Chapter number "
+            f"[{current_chapter_display}]: "
+        ).strip()
+
+        if chapter_value:
+            try:
+                new_chapter_number = int(
+                    chapter_value
+                )
+
+                if new_chapter_number <= 0:
+                    raise ValueError
+
+            except ValueError:
+                print(
+                    "Chapter number must "
+                    "be a positive whole number."
+                )
+                print()
+                return
+
+        else:
+            new_chapter_number = (
+                current_chapter_number
+            )
+
+        if new_chapter_number is None:
+            print(
+                "A chapter-published event "
+                "needs a chapter number."
+            )
+            print()
+            return
+
+    else:
+        new_chapter_number = None
+
+    current_description_display = (
+        current_description
+        if current_description
+        else ""
+    )
+
+    description_value = input(
+        f"Description "
+        f"[{current_description_display}] "
+        "(Enter keeps it, CLEAR removes it): "
+    ).strip()
+
+    if (
+        description_value.upper()
+        == "CLEAR"
+    ):
+        new_description = None
+
+    elif description_value:
+        new_description = (
+            description_value
+        )
+
+    else:
+        new_description = (
+            current_description
+        )
+
+    update_event(
+        event_id,
+        new_occurred_at,
+        new_event_type,
+        new_chapter_number,
+        new_description,
+    )
+
+    print()
+    print("Event updated.")
+    print()
+
+
+def delete_work_event():
+    selected_work = select_work(
+        "Enter the number of the work: "
+    )
+
+    if selected_work is None:
+        return
+
+    work_id, _, title, _ = selected_work
+
+    selected_event = select_work_event(
+        work_id,
+        title,
+        "Enter the number of the event "
+        "to delete: ",
+    )
+
+    if selected_event is None:
+        return
+
+    (
+        event_id,
+        occurred_at,
+        event_type,
+        chapter_number,
+        description,
+    ) = selected_event
+
+    labels = {
+        "work_published": "Work published",
+        "chapter_published": "Chapter published",
+        "work_completed": "Work completed",
+        "note": "Note",
+    }
+
+    print()
+    print("Event to delete:")
+    print(
+        labels.get(
+            event_type,
+            event_type,
+        )
+    )
+    print(
+        f"Date: {occurred_at}"
+    )
+
+    if chapter_number is not None:
+        print(
+            f"Chapter: {chapter_number}"
+        )
+
+    if description:
+        print(
+            f"Description: {description}"
+        )
+
+    print()
+
+    confirmation = input(
+        "Type DELETE to permanently "
+        "remove this event: "
+    ).strip()
+
+    if confirmation != "DELETE":
+        print("Deletion cancelled.")
+        print()
+        return
+
+    delete_event(event_id)
+
+    print()
+    print("Event deleted.")
+    print()
+
+
 def main():
     initialize_database()
 
@@ -682,16 +1065,22 @@ def main():
         print("1. Add work")
         print("2. List works")
         print("3. Edit work")
-        print("4. Fetch and save current stats")
+        print(
+            "4. Fetch and save current stats"
+        )
         print("5. Enter manual snapshot")
         print("6. Import historical CSV")
         print("7. View snapshots")
         print("8. Collection interval")
         print("9. Database cleanup")
-        print("10. Change NULL stats to 0")
+        print(
+            "10. Change NULL stats to 0"
+        )
         print("11. Add work event")
         print("12. View work events")
-        print("13. Exit")
+        print("13. Edit work event")
+        print("14. Delete work event")
+        print("15. Exit")
         print()
 
         choice = input(
@@ -801,6 +1190,12 @@ def main():
             view_work_events()
 
         elif choice == "13":
+            edit_work_event()
+
+        elif choice == "14":
+            delete_work_event()
+
+        elif choice == "15":
             print("Goodbye.")
             break
 

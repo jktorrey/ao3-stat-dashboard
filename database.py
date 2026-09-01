@@ -555,3 +555,47 @@ def get_events_for_work(work_id):
     connection.close()
 
     return events
+
+
+def update_event(
+    event_id,
+    occurred_at,
+    event_type,
+    chapter_number=None,
+    description=None,
+):
+    if isinstance(occurred_at, datetime):
+        occurred_at = occurred_at.isoformat()
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        UPDATE events
+        SET
+            occurred_at = ?,
+            event_type = ?,
+            chapter_number = ?,
+            description = ?
+        WHERE id = ?
+    """, (
+        occurred_at,
+        event_type,
+        chapter_number,
+        description,
+        event_id,
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+def delete_event(event_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute(
+        "DELETE FROM events WHERE id = ?",
+        (event_id,),
+    )
+
+    connection.commit()
+    connection.close()
