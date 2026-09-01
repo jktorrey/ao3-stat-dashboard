@@ -49,8 +49,27 @@ def initialize_database():
         )
     """)
 
-    cursor = connection.execute("PRAGMA table_info(snapshots)")
-    columns = [row[1] for row in cursor.fetchall()]
+    connection.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY,
+            work_id INTEGER NOT NULL,
+            occurred_at TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            chapter_number INTEGER,
+            description TEXT,
+
+            FOREIGN KEY (work_id) REFERENCES works(id)
+        )
+    """)
+
+    cursor = connection.execute(
+        "PRAGMA table_info(snapshots)"
+    )
+
+    columns = [
+        row[1]
+        for row in cursor.fetchall()
+    ]
 
     if "chapters_total" not in columns:
         connection.execute(
@@ -59,8 +78,14 @@ def initialize_database():
         )
 
     connection.execute("""
-        INSERT OR IGNORE INTO settings (key, value)
-        VALUES ('collection_interval_hours', '6')
+        INSERT OR IGNORE INTO settings (
+            key,
+            value
+        )
+        VALUES (
+            'collection_interval_hours',
+            '6'
+        )
     """)
 
     connection.commit()
@@ -475,3 +500,58 @@ def replace_null_stats_with_zero():
         "rows_updated": rows_updated,
         "values_replaced": values_replaced,
     }
+
+
+def add_event(
+    work_id,
+    occurred_at,
+    event_type,
+    chapter_number=None,
+    description=None,
+):
+    if isinstance(occurred_at, datetime):
+        occurred_at = occurred_at.isoformat()
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO events (
+            work_id,
+            occurred_at,
+            event_type,
+            chapter_number,
+            description
+        )
+        VALUES (?, ?, ?, ?, ?)
+    """, (
+        work_id,
+        occurred_at,
+        event_type,
+        chapter_number,
+        description,
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+def get_events_for_work(work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT
+            id,
+            occurred_at,
+            event_type,
+            chapter_number,
+            description
+        FROM events
+        WHERE work_id = ?
+        ORDER BY occurred_at, id
+    """, (work_id,))
+
+    events = cursor.fetchall()
+
+    connection.close()
+
+    return events

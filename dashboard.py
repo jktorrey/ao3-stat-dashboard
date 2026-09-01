@@ -10,6 +10,7 @@ from dashboard_data import (
     get_snapshot_count,
     get_work_count,
     get_work_history,
+    get_work_events,
 )
 
 
@@ -754,174 +755,206 @@ def render_private_stats(work_id):
 
 
 def render_history(work_id):
-    st.divider()
+    history = get_work_history(work_id)
+    events = get_work_events(work_id)
 
-    st.subheader(
-        "Historical growth"
-    )
-
-    history = get_work_history(
-        work_id
-    )
+    st.subheader("Historical growth")
 
     if history.empty:
         st.info(
-            "No historical snapshots "
-            "are available."
+            "No historical snapshots are available "
+            "for this work."
         )
         return
 
-    history["collected_at"] = (
-        history["collected_at"]
-        .dt.tz_convert(
-            LOCAL_TIMEZONE
-        )
-    )
-
-    metric_fields = {
+    metric_options = {
         "Hits": "hits",
         "Kudos": "kudos",
         "Comments": "comments",
-        "Public bookmarks": (
-            "public_bookmarks"
-        ),
+        "Public bookmarks": "public_bookmarks",
         "Subscriptions": "subscriptions",
-        "Total bookmarks": (
-            "total_bookmarks"
-        ),
-        "Comment threads": (
-            "comment_threads"
-        ),
+        "Total bookmarks": "total_bookmarks",
+        "Comment threads": "comment_threads",
         "Word count": "word_count",
     }
 
-    private_fields = {
+    selected_label = st.selectbox(
+        "Metric",
+        list(metric_options.keys()),
+    )
+
+    selected_metric = metric_options[
+        selected_label
+    ]
+
+    chart_data = history.copy()
+
+    private_metrics = {
         "subscriptions",
         "total_bookmarks",
         "comment_threads",
     }
 
-    selected_metrics = st.multiselect(
-        "Metrics",
-        options=list(
-            metric_fields.keys()
-        ),
-        default=[
-            "Hits",
-            "Kudos",
-        ],
+    if selected_metric in private_metrics:
+        chart_data = chart_data[
+            chart_data["source"] != "ao3_public"
+        ].copy()
+
+    chart_data = chart_data.dropna(
+        subset=[selected_metric]
     )
 
-    if not selected_metrics:
+    if chart_data.empty:
         st.info(
-            "Select at least one metric "
-            "to display."
+            f"No historical {selected_label.lower()} "
+            f"data is available for this work."
         )
         return
 
-    chart_frames = []
-
-    for metric_label in selected_metrics:
-        field = metric_fields[
-            metric_label
-        ]
-
-        metric_history = (
-            history.copy()
-        )
-
-        if field in private_fields:
-            metric_history = (
-                metric_history[
-                    metric_history[
-                        "source"
-                    ]
-                    != "ao3_public"
-                ]
-            )
-
-        metric_history = (
-            metric_history[
-                [
-                    "collected_at",
-                    "source",
-                    field,
-                ]
-            ].copy()
-        )
-
-        metric_history = (
-            metric_history.rename(
-                columns={
-                    field: "value",
-                }
-            )
-        )
-
-        metric_history[
-            "Metric"
-        ] = metric_label
-
-        metric_history[
-            "Source"
-        ] = (
-            metric_history["source"]
-            .map(display_source)
-        )
-
-        chart_frames.append(
-            metric_history
-        )
-
-    historical_chart_data = pd.concat(
-        chart_frames,
-        ignore_index=True,
+    chart_data["display_time"] = (
+        chart_data["collected_at"]
+        .dt.tz_convert(LOCAL_TIMEZONE)
     )
 
-    historical_figure = px.line(
-        historical_chart_data,
-        x="collected_at",
-        y="value",
-        color="Metric",
+    figure = px.line(
+        chart_data,
+        x="display_time",
+        y=selected_metric,
         markers=True,
-        hover_data={
-            "Source": True,
-            "source": False,
-        },
+        line_shape="hv",
         labels={
-            "collected_at": "Date",
-            "value": "Value",
+            "display_time": "Date",
+            selected_metric: selected_label,
+        },
+        hover_data={
+            "source": True,
+            "display_time": False,
         },
     )
 
-    historical_figure.update_traces(
-        line_shape="hv"
-    )
-
-    historical_figure.update_layout(
+    figure.update_layout(
         xaxis_title=None,
-        yaxis_title=None,
-        hovermode="x unified",
+        yaxis_title=selected_label,
     )
 
-    historical_figure.update_xaxes(
-        tickformat="%b %d",
-        hoverformat=(
-            "%b %d, %Y %I:%M %p"
-        ),
-    )
+    if not events.empty:
+        event_data = events.copy()
+
+        event_data["display_time"] = (
+            event_data["occurred_at"]
+            .dt.tz_convert(LOCAL_TIMEZONE)
+        )
+
+        event_labels = {
+            "work_published": "Published",
+            "chapter_published": "Chapter",
+            "work_completed": "Completed",
+            "note": "Note",
+        }
+
+        for _, event in event_data.iterrows():
+            event_type = event[
+                "event_type"
+            ]
+
+            if (
+                event_type
+                == "chapter_published"
+                and pd.notna(
+                    event["chapter_number"]
+                )
+            ):
+                label = (
+                    f"Ch. "
+                    f"{int(event['chapter_number'])}"
+                )
+
+            elif event_type == "note":
+                if (
+                    pd.notna(event["description"])
+                    and event["description"]
+                ):
+                    label = event["description"]
+
+                else:
+                    label = "Note"
+
+            else:
+                label = event_labels.get(
+                    event_type,
+                    event_type,
+                )
+
+            figure.add_vline(
+                x=event["display_time"],
+                line_dash="dot",
+                opacity=0.6,
+            )
+
+            figure.add_annotation(
+                x=event["display_time"],
+                y=1,
+                yref="paper",
+                text=label,
+                showarrow=False,
+                textangle=-90,
+                xanchor="left",
+                yanchor="top",
+            )
 
     st.plotly_chart(
-        historical_figure,
+        figure,
         use_container_width=True,
     )
 
-    st.caption(
-        "Historical values use a stepped line "
-        "because snapshots record observations "
-        "at specific points in time rather than "
-        "continuous changes between observations."
-    )
+    if not events.empty:
+        with st.expander("Events on this chart"):
+            event_table = events.copy()
+
+            event_table["Date"] = (
+                event_table["occurred_at"]
+                .apply(display_timestamp)
+            )
+
+            event_table["Event"] = (
+                event_table["event_type"]
+                .map({
+                    "work_published":
+                        "Work published",
+                    "chapter_published":
+                        "Chapter published",
+                    "work_completed":
+                        "Work completed",
+                    "note":
+                        "Note",
+                })
+                .fillna(
+                    event_table["event_type"]
+                )
+            )
+
+            event_table["Chapter"] = (
+                event_table["chapter_number"]
+            )
+
+            event_table["Description"] = (
+                event_table["description"]
+            )
+
+            event_table = event_table[
+                [
+                    "Date",
+                    "Event",
+                    "Chapter",
+                    "Description",
+                ]
+            ]
+
+            st.dataframe(
+                event_table,
+                hide_index=True,
+                use_container_width=True,
+            )
 
 
 def main():

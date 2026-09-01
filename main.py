@@ -11,6 +11,10 @@ from database import (
     set_collection_interval,
     find_redundant_snapshots,
     delete_snapshots,
+    get_null_stat_counts,
+    replace_null_stats_with_zero,
+    add_event,
+    get_events_for_work,
 )
 
 from collection import collect_all_stats
@@ -492,6 +496,182 @@ def normalize_null_stats():
     print()
 
 
+def add_work_event():
+    selected_work = select_work(
+        "Enter the number of the work: "
+    )
+
+    if selected_work is None:
+        return
+
+    work_id, _, title, _ = selected_work
+
+    print()
+    print(f'Add event for "{title}"')
+    print()
+    print("1. Work published")
+    print("2. Chapter published")
+    print("3. Work completed")
+    print("4. Note")
+    print()
+
+    event_choice = input(
+        "Event type: "
+    ).strip()
+
+    event_types = {
+        "1": "work_published",
+        "2": "chapter_published",
+        "3": "work_completed",
+        "4": "note",
+    }
+
+    if event_choice not in event_types:
+        print("Invalid event type.")
+        print()
+        return
+
+    event_type = event_types[event_choice]
+
+    while True:
+        timestamp_value = input(
+            "Event date/time "
+            "(YYYY-MM-DD HH:MM): "
+        ).strip()
+
+        try:
+            occurred_at = datetime.fromisoformat(
+                timestamp_value
+            )
+
+            if occurred_at.tzinfo is None:
+                local_timezone = (
+                    datetime.now()
+                    .astimezone()
+                    .tzinfo
+                )
+
+                occurred_at = occurred_at.replace(
+                    tzinfo=local_timezone
+                )
+
+            occurred_at = occurred_at.astimezone(
+                timezone.utc
+            )
+
+            break
+
+        except ValueError:
+            print(
+                "Please use a date and time such as "
+                "2026-08-30 21:15."
+            )
+
+    chapter_number = None
+
+    if event_type == "chapter_published":
+        while True:
+            chapter_value = input(
+                "Chapter number: "
+            ).strip()
+
+            try:
+                chapter_number = int(
+                    chapter_value
+                )
+
+                if chapter_number <= 0:
+                    raise ValueError
+
+                break
+
+            except ValueError:
+                print(
+                    "Please enter a positive "
+                    "whole number."
+                )
+
+    description = input(
+        "Description "
+        "(optional, press Enter to skip): "
+    ).strip()
+
+    if not description:
+        description = None
+
+    add_event(
+        work_id,
+        occurred_at,
+        event_type,
+        chapter_number,
+        description,
+    )
+
+    print()
+    print("Event saved.")
+    print()
+
+
+def view_work_events():
+    selected_work = select_work(
+        "Enter the number of the work: "
+    )
+
+    if selected_work is None:
+        return
+
+    work_id, _, title, _ = selected_work
+
+    events = get_events_for_work(
+        work_id
+    )
+
+    print()
+    print(f'Events for "{title}":')
+    print()
+
+    if not events:
+        print("No events recorded.")
+        print()
+        return
+
+    labels = {
+        "work_published": "Work published",
+        "chapter_published": "Chapter published",
+        "work_completed": "Work completed",
+        "note": "Note",
+    }
+
+    for (
+        event_id,
+        occurred_at,
+        event_type,
+        chapter_number,
+        description,
+    ) in events:
+
+        print(
+            f"{event_id}. "
+            f"{labels.get(event_type, event_type)}"
+        )
+
+        print(
+            f"   Date: {occurred_at}"
+        )
+
+        if chapter_number is not None:
+            print(
+                f"   Chapter: {chapter_number}"
+            )
+
+        if description:
+            print(
+                f"   {description}"
+            )
+
+        print()
+
+
 def main():
     initialize_database()
 
@@ -509,7 +689,9 @@ def main():
         print("8. Collection interval")
         print("9. Database cleanup")
         print("10. Change NULL stats to 0")
-        print("11. Exit")
+        print("11. Add work event")
+        print("12. View work events")
+        print("13. Exit")
         print()
 
         choice = input(
@@ -613,6 +795,12 @@ def main():
             normalize_null_stats()
 
         elif choice == "11":
+            add_work_event()
+
+        elif choice == "12":
+            view_work_events()
+
+        elif choice == "13":
             print("Goodbye.")
             break
 

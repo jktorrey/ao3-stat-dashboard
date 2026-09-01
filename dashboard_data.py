@@ -332,3 +332,34 @@ def get_period_changes(hours):
         records.append(record)
 
     return pd.DataFrame(records)
+
+
+def get_work_events(work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    events = pd.read_sql_query(
+        """
+        SELECT
+            id,
+            occurred_at,
+            event_type,
+            chapter_number,
+            description
+        FROM events
+        WHERE work_id = ?
+        ORDER BY occurred_at, id
+        """,
+        connection,
+        params=(work_id,),
+    )
+
+    connection.close()
+
+    if not events.empty:
+        events["occurred_at"] = pd.to_datetime(
+            events["occurred_at"],
+            format="mixed",
+            utc=True,
+        )
+
+    return events
