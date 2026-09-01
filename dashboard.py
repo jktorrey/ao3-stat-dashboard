@@ -113,29 +113,41 @@ def render_overview(
         .sum()
     )
 
-    total_hits_change = int(
-        changes["hits_change"]
-        .fillna(0)
+    available = (
+        changes["baseline_collected_at"]
+        .notna()
         .sum()
     )
 
-    total_kudos_change = int(
-        changes["kudos_change"]
-        .fillna(0)
-        .sum()
+    total_works = len(changes)
+
+    full_coverage = (
+        total_works > 0
+        and available == total_works
     )
 
-    total_comments_change = int(
-        changes["comments_change"]
-        .fillna(0)
-        .sum()
-    )
+    if full_coverage:
+        total_hits_change = int(
+            changes["hits_change"].sum()
+        )
 
-    total_bookmarks_change = int(
-        changes["bookmarks_change"]
-        .fillna(0)
-        .sum()
-    )
+        total_kudos_change = int(
+            changes["kudos_change"].sum()
+        )
+
+        total_comments_change = int(
+            changes["comments_change"].sum()
+        )
+
+        total_bookmarks_change = int(
+            changes["bookmarks_change"].sum()
+        )
+
+    else:
+        total_hits_change = None
+        total_kudos_change = None
+        total_comments_change = None
+        total_bookmarks_change = None
 
     st.subheader("Overview")
 
@@ -221,18 +233,13 @@ def render_overview(
             ),
         )
 
-    available = (
-        changes["baseline_collected_at"]
-        .notna()
-        .sum()
-    )
-
-    if available < len(changes):
-        st.caption(
-            f"These totals include the "
-            f"{available} of {len(changes)} works "
-            f"with a {window_label.lower()} "
-            f"baseline available."
+    if not full_coverage:
+        st.info(
+            f"Portfolio totals are unavailable "
+            f"for this window because only "
+            f"{available} of {total_works} works "
+            f"have a baseline at least "
+            f"{window_label.lower()} old."
         )
 
     st.divider()
