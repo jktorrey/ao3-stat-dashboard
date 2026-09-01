@@ -344,7 +344,11 @@ def get_work_events(work_id):
             occurred_at,
             event_type,
             chapter_number,
-            description
+            description,
+            source,
+            date_source,
+            date_precision,
+            detected_at
         FROM events
         WHERE work_id = ?
         ORDER BY occurred_at, id
@@ -354,12 +358,5 @@ def get_work_events(work_id):
     )
 
     connection.close()
-
-    if not events.empty:
-        events["occurred_at"] = pd.to_datetime(
-            events["occurred_at"],
-            format="mixed",
-            utc=True,
-        )
 
     return events

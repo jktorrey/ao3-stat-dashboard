@@ -1,5 +1,5 @@
 import time
-
+from datetime import date
 import requests
 from bs4 import BeautifulSoup
 
@@ -59,44 +59,198 @@ def fetch_work_stats(url):
 
 
 def parse_work_stats(html):
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
 
     stats = {
         "hits": 0,
         "kudos": 0,
         "comments": 0,
         "public_bookmarks": 0,
+        "word_count": None,
+        "chapters_published": None,
+        "chapters_total": None,
+
+        "published_date": None,
+        "updated_date": None,
+        "completed_date": None,
     }
 
-    fields = {
-        "hits": "hits",
-        "kudos": "kudos",
-        "comments": "comments",
-        "bookmarks": "public_bookmarks",
-        "words": "word_count",
-    }
+    def parse_integer(selector):
+        element = soup.select_one(
+            selector
+        )
 
-    for ao3_class, field_name in fields.items():
-        element = soup.select_one(f"dd.{ao3_class}")
+        if element is None:
+            return None
 
-        if element:
-            value = element.get_text(
+        text = (
+            element.get_text(
                 strip=True
-            ).replace(",", "")
+            )
+            .replace(",", "")
+        )
 
-            stats[field_name] = int(value)
+        try:
+            return int(text)
 
-    chapters = soup.select_one("dd.chapters")
+        except ValueError:
+            return None
 
-    if chapters:
-        chapter_text = chapters.get_text(strip=True)
-        published, total = chapter_text.split("/")
+    hits = parse_integer("dd.hits")
 
-        stats["chapters_published"] = int(published)
+    if hits is not None:
+        stats["hits"] = hits
 
-        if total != "?":
-            stats["chapters_total"] = int(total)
-        else:
-            stats["chapters_total"] = None
+    kudos = parse_integer("dd.kudos")
+
+    if kudos is not None:
+        stats["kudos"] = kudos
+
+    comments = parse_integer(
+        "dd.comments"
+    )
+
+    if comments is not None:
+        stats["comments"] = comments
+
+    bookmarks = parse_integer(
+        "dd.bookmarks"
+    )
+
+    if bookmarks is not None:
+        stats["public_bookmarks"] = (
+            bookmarks
+        )
+
+    stats["word_count"] = (
+        parse_integer("dd.words")
+    )
+
+    chapters = soup.select_one(
+        "dd.chapters"
+    )
+
+    if chapters is not None:
+        chapter_text = chapters.get_text(
+            strip=True
+        )
+
+        if "/" in chapter_text:
+            published, total = (
+                chapter_text.split(
+                    "/",
+                    1,
+                )
+            )
+
+            try:
+                stats[
+                    "chapters_published"
+                ] = int(
+                    published.strip()
+                )
+
+            except ValueError:
+                stats[
+                    "chapters_published"
+                ] = None
+
+            total = total.strip()
+
+            if total == "?":
+                stats[
+                    "chapters_total"
+                ] = None
+
+            else:
+                try:
+                    stats[
+                        "chapters_total"
+                    ] = int(total)
+
+                except ValueError:
+                    stats[
+                        "chapters_total"
+                    ] = None
+
+    published_element = (
+        soup.select_one(
+            "dd.published"
+        )
+    )
+
+    if published_element is not None:
+        stats["published_date"] = (
+            parse_ao3_date(
+                published_element.get_text(
+                    strip=True
+                )
+            )
+        )
+
+    status_label_element = (
+        soup.select_one(
+            "dt.status"
+        )
+    )
+
+    status_date_element = (
+        soup.select_one(
+            "dd.status"
+        )
+    )
+
+    if (
+        status_label_element
+        is not None
+        and status_date_element
+        is not None
+    ):
+        status_label = (
+            status_label_element
+            .get_text(
+                " ",
+                strip=True,
+            )
+            .rstrip(":")
+            .lower()
+        )
+
+        status_date = (
+            parse_ao3_date(
+                status_date_element
+                .get_text(
+                    strip=True
+                )
+            )
+        )
+
+        if status_label == "updated":
+            stats["updated_date"] = (
+                status_date
+            )
+
+        elif status_label == "completed":
+            stats["completed_date"] = (
+                status_date
+            )
 
     return stats
+
+
+def parse_ao3_date(value):
+    if not value:
+        return None
+
+    value = value.strip()
+
+    try:
+        return date.fromisoformat(
+            value
+        ).isoformat()
+
+    except ValueError:
+        return None

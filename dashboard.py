@@ -837,14 +837,9 @@ def render_history(work_id):
         yaxis_title=selected_label,
     )
 
+    has_date_only_events = False
+
     if not events.empty:
-        event_data = events.copy()
-
-        event_data["display_time"] = (
-            event_data["occurred_at"]
-            .dt.tz_convert(LOCAL_TIMEZONE)
-        )
-
         event_labels = {
             "work_published": "Published",
             "chapter_published": "Chapter",
@@ -852,14 +847,11 @@ def render_history(work_id):
             "note": "Note",
         }
 
-        for _, event in event_data.iterrows():
-            event_type = event[
-                "event_type"
-            ]
+        for _, event in events.iterrows():
+            event_type = event["event_type"]
 
             if (
-                event_type
-                == "chapter_published"
+                event_type == "chapter_published"
                 and pd.notna(
                     event["chapter_number"]
                 )
@@ -885,17 +877,50 @@ def render_history(work_id):
                     event_type,
                 )
 
+            if event["date_precision"] == "date":
+                has_date_only_events = True
+
+                event_time = pd.Timestamp(
+                    event["occurred_at"]
+                )
+
+                event_time = (
+                    event_time.tz_localize(
+                        LOCAL_TIMEZONE
+                    )
+                    + pd.Timedelta(hours=12)
+                )
+
+                chart_label = (
+                    f"{label} (date)"
+                )
+
+            else:
+                event_time = pd.to_datetime(
+                    event["occurred_at"],
+                    format="mixed",
+                    utc=True,
+                )
+
+                event_time = (
+                    event_time.tz_convert(
+                        LOCAL_TIMEZONE
+                    )
+                )
+
+                chart_label = label
+
             figure.add_vline(
-                x=event["display_time"],
+                x=event_time,
                 line_dash="dot",
                 opacity=0.6,
             )
 
             figure.add_annotation(
-                x=event["display_time"],
+                x=event_time,
                 y=1,
                 yref="paper",
-                text=label,
+                text=chart_label,
                 showarrow=False,
                 textangle=-90,
                 xanchor="left",
@@ -907,13 +932,43 @@ def render_history(work_id):
         use_container_width=True,
     )
 
+    if has_date_only_events:
+        st.caption(
+            "Events marked “(date)” have only a "
+            "calendar date available. They are "
+            "positioned at noon for visualization; "
+            "the actual event time is unknown."
+        )
+
     if not events.empty:
         with st.expander("Events on this chart"):
             event_table = events.copy()
 
+            def format_event_date(row):
+                if (
+                    row["date_precision"]
+                    == "date"
+                ):
+                    event_date = pd.Timestamp(
+                        row["occurred_at"]
+                    )
+
+                    return (
+                        event_date.strftime(
+                            "%b %d, %Y"
+                        )
+                        + " (date only)"
+                    )
+
+                return display_timestamp(
+                    row["occurred_at"]
+                )
+
             event_table["Date"] = (
-                event_table["occurred_at"]
-                .apply(display_timestamp)
+                event_table.apply(
+                    format_event_date,
+                    axis=1,
+                )
             )
 
             event_table["Event"] = (
@@ -941,12 +996,58 @@ def render_history(work_id):
                 event_table["description"]
             )
 
+            event_table["Source"] = (
+                event_table["source"]
+                .map({
+                    "manual":
+                        "Manual",
+                    "ao3_detected":
+                        "AO3 detected",
+                })
+                .fillna(
+                    event_table["source"]
+                )
+            )
+
+            event_table["Date source"] = (
+                event_table["date_source"]
+                .map({
+                    "manual":
+                        "Manual",
+                    "ao3_published":
+                        "AO3 published date",
+                    "ao3_chapter_date":
+                        "AO3 chapter date",
+                    "ao3_updated":
+                        "AO3 updated date",
+                    "collector_detected":
+                        "Collector detection",
+                })
+                .fillna(
+                    event_table["date_source"]
+                )
+            )
+
+            event_table["Detected"] = (
+                event_table["detected_at"]
+                .apply(
+                    lambda value:
+                        display_timestamp(value)
+                        if pd.notna(value)
+                        and value
+                        else "—"
+                )
+            )
+
             event_table = event_table[
                 [
                     "Date",
                     "Event",
                     "Chapter",
                     "Description",
+                    "Source",
+                    "Date source",
+                    "Detected",
                 ]
             ]
 

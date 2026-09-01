@@ -58,24 +58,65 @@ def initialize_database():
             chapter_number INTEGER,
             description TEXT,
 
+            source TEXT NOT NULL DEFAULT 'manual',
+            date_source TEXT NOT NULL DEFAULT 'manual',
+            date_precision TEXT NOT NULL DEFAULT 'datetime',
+            detected_at TEXT,
+
             FOREIGN KEY (work_id) REFERENCES works(id)
         )
     """)
 
-    cursor = connection.execute(
+    snapshot_cursor = connection.execute(
         "PRAGMA table_info(snapshots)"
     )
 
-    columns = [
+    snapshot_columns = [
         row[1]
-        for row in cursor.fetchall()
+        for row in snapshot_cursor.fetchall()
     ]
 
-    if "chapters_total" not in columns:
+    if "chapters_total" not in snapshot_columns:
         connection.execute(
             "ALTER TABLE snapshots "
             "ADD COLUMN chapters_total INTEGER"
         )
+
+    event_cursor = connection.execute(
+        "PRAGMA table_info(events)"
+    )
+
+    event_columns = [
+        row[1]
+        for row in event_cursor.fetchall()
+    ]
+
+    if "source" not in event_columns:
+        connection.execute("""
+            ALTER TABLE events
+            ADD COLUMN source TEXT
+            NOT NULL DEFAULT 'manual'
+        """)
+
+    if "date_source" not in event_columns:
+        connection.execute("""
+            ALTER TABLE events
+            ADD COLUMN date_source TEXT
+            NOT NULL DEFAULT 'manual'
+        """)
+
+    if "date_precision" not in event_columns:
+        connection.execute("""
+            ALTER TABLE events
+            ADD COLUMN date_precision TEXT
+            NOT NULL DEFAULT 'datetime'
+        """)
+
+    if "detected_at" not in event_columns:
+        connection.execute("""
+            ALTER TABLE events
+            ADD COLUMN detected_at TEXT
+        """)
 
     connection.execute("""
         INSERT OR IGNORE INTO settings (
@@ -508,9 +549,16 @@ def add_event(
     event_type,
     chapter_number=None,
     description=None,
+    source="manual",
+    date_source="manual",
+    date_precision="datetime",
+    detected_at=None,
 ):
     if isinstance(occurred_at, datetime):
         occurred_at = occurred_at.isoformat()
+
+    if isinstance(detected_at, datetime):
+        detected_at = detected_at.isoformat()
 
     connection = sqlite3.connect(DATABASE_NAME)
 
@@ -520,15 +568,23 @@ def add_event(
             occurred_at,
             event_type,
             chapter_number,
-            description
+            description,
+            source,
+            date_source,
+            date_precision,
+            detected_at
         )
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         work_id,
         occurred_at,
         event_type,
         chapter_number,
         description,
+        source,
+        date_source,
+        date_precision,
+        detected_at,
     ))
 
     connection.commit()
