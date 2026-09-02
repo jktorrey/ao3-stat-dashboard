@@ -3,6 +3,7 @@ from datetime import date
 import requests
 from bs4 import BeautifulSoup
 import re
+from urllib.parse import urljoin
 
 
 HEADERS = {
@@ -428,3 +429,281 @@ def fetch_chapter_metadata(
                 f"metadata for {base_url}: "
                 f"{error}"
             )
+
+
+def parse_user_works_page(html):
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
+
+    works = []
+
+    for work_blurb in soup.select(
+        "li.work.blurb"
+    ):
+        work_link = work_blurb.select_one(
+            'h4.heading a[href^="/works/"]'
+        )
+
+        if work_link is None:
+            continue
+
+        href = work_link.get("href")
+
+        if not href:
+            continue
+
+        work_match = re.match(
+            r"^/works/(\d+)",
+            href,
+        )
+
+        if work_match is None:
+            continue
+
+        ao3_work_id = int(
+            work_match.group(1)
+        )
+
+        title = work_link.get_text(
+            " ",
+            strip=True,
+        )
+
+        works.append({
+            "ao3_work_id": ao3_work_id,
+            "title": title,
+            "url": (
+                "https://archiveofourown.org"
+                f"/works/{ao3_work_id}"
+            ),
+        })
+
+    next_link = soup.select_one(
+        "ol.pagination.actions "
+        "li.next a"
+    )
+
+    if next_link is None:
+        next_link = soup.select_one(
+            'a[rel="next"]'
+        )
+
+    if next_link is not None:
+        next_page = next_link.get(
+            "href"
+        )
+    else:
+        next_page = None
+
+    return works, next_page
+
+def fetch_user_works(username):
+    search_url = (
+        "https://archiveofourown.org"
+        "/works/search"
+    )
+
+    search_params = {
+        "work_search[creators]": username,
+        "work_search[sort_column]":
+            "revised_at",
+        "work_search[sort_direction]":
+            "desc",
+    }
+
+    next_url = search_url
+
+    all_works = []
+    seen_work_ids = set()
+    seen_pages = set()
+
+    discovery_connect_timeout = 15
+    discovery_read_timeout = 60
+    discovery_max_attempts = 3
+
+    page_number = 1
+    first_page = True
+
+    while next_url:
+        response = None
+
+        for attempt in range(
+            1,
+            discovery_max_attempts + 1,
+        ):
+            print(
+                f"  Fetching search page "
+                f"{page_number} "
+                f"(attempt {attempt}/"
+                f"{discovery_max_attempts})..."
+            )
+
+            time.sleep(
+                REQUEST_DELAY_SECONDS
+            )
+
+            try:
+                if first_page:
+                    response = requests.get(
+                        next_url,
+                        params=search_params,
+                        headers=HEADERS,
+                        timeout=(
+                            discovery_connect_timeout,
+                            discovery_read_timeout,
+                        ),
+                    )
+
+                else:
+                    response = requests.get(
+                        next_url,
+                        headers=HEADERS,
+                        timeout=(
+                            discovery_connect_timeout,
+                            discovery_read_timeout,
+                        ),
+                    )
+
+                if (
+                    500
+                    <= response.status_code
+                    <= 599
+                ):
+                    print(
+                        "  AO3 returned server "
+                        f"error "
+                        f"{response.status_code}."
+                    )
+
+                    if (
+                        attempt
+                        < discovery_max_attempts
+                    ):
+                        print(
+                            "  Treating it as "
+                            "temporary and retrying..."
+                        )
+
+                        time.sleep(
+                            RETRY_DELAY_SECONDS
+                        )
+
+                        continue
+
+                    raise RuntimeError(
+                        "AO3 returned server "
+                        f"error "
+                        f"{response.status_code} "
+                        "on every attempt."
+                    )
+
+                if response.status_code == 429:
+                    print(
+                        "  AO3 asked us to "
+                        "slow down."
+                    )
+
+                    if (
+                        attempt
+                        < discovery_max_attempts
+                    ):
+                        time.sleep(
+                            RETRY_DELAY_SECONDS
+                            * 2
+                        )
+
+                        continue
+
+                    raise RuntimeError(
+                        "AO3 rate-limited the "
+                        "discovery request."
+                    )
+
+                response.raise_for_status()
+
+                break
+
+            except requests.Timeout:
+                if (
+                    attempt
+                    < discovery_max_attempts
+                ):
+                    print(
+                        "  AO3 timed out; "
+                        "retrying..."
+                    )
+
+                    time.sleep(
+                        RETRY_DELAY_SECONDS
+                    )
+
+                    continue
+
+                raise RuntimeError(
+                    "AO3 timed out while "
+                    "searching for the user's "
+                    "works."
+                )
+
+            except requests.RequestException as error:
+                raise RuntimeError(
+                    "Could not search AO3 "
+                    f"works: {error}"
+                )
+
+        first_page = False
+
+        actual_url = response.url
+
+        if actual_url in seen_pages:
+            raise RuntimeError(
+                "AO3 pagination loop detected."
+            )
+
+        seen_pages.add(actual_url)
+
+        print(
+            f"  Search page {page_number} "
+            f"received."
+        )
+
+        page_works, next_page = (
+            parse_user_works_page(
+                response.text
+            )
+        )
+
+        print(
+            f"  Works found on page "
+            f"{page_number}: "
+            f"{len(page_works)}"
+        )
+
+        for work in page_works:
+            ao3_work_id = work[
+                "ao3_work_id"
+            ]
+
+            if ao3_work_id in seen_work_ids:
+                continue
+
+            seen_work_ids.add(
+                ao3_work_id
+            )
+
+            all_works.append(work)
+
+        if next_page:
+            next_url = urljoin(
+                response.url,
+                next_page,
+            )
+
+            page_number += 1
+
+        else:
+            next_url = None
+
+    return all_works
