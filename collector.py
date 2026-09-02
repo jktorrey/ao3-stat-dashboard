@@ -19,15 +19,20 @@ READ_TIMEOUT_SECONDS = 15
 MAX_ATTEMPTS = 2
 
 
-def fetch_work_stats(url):
+def fetch_ao3_page(url):
     last_error = None
 
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        time.sleep(REQUEST_DELAY_SECONDS)
+    for attempt in range(
+        1,
+        MAX_ATTEMPTS + 1,
+    ):
+        time.sleep(
+            REQUEST_DELAY_SECONDS
+        )
 
         try:
             response = requests.get(
-                f"{url}?view_adult=true",
+                url,
                 headers=HEADERS,
                 timeout=(
                     CONNECT_TIMEOUT_SECONDS,
@@ -35,29 +40,129 @@ def fetch_work_stats(url):
                 ),
             )
 
-            response.raise_for_status()
-
-            return parse_work_stats(response.text)
-
-        except requests.exceptions.Timeout as error:
+        except (
+            requests.Timeout,
+            requests.ConnectionError,
+        ) as error:
             last_error = error
 
             if attempt < MAX_ATTEMPTS:
                 print(
-                    f"  AO3 timed out. Retrying in "
-                    f"{RETRY_DELAY_SECONDS} seconds..."
+                    "  AO3 connection problem; "
+                    "retrying..."
                 )
-                time.sleep(RETRY_DELAY_SECONDS)
 
-        except requests.exceptions.RequestException as error:
+                time.sleep(
+                    RETRY_DELAY_SECONDS
+                )
+
+                continue
+
             raise RuntimeError(
-                f"AO3 request failed for {url}: {error}"
+                f"AO3 request failed for "
+                f"{url}: {error}"
             ) from error
 
+        except requests.RequestException as error:
+            raise RuntimeError(
+                f"AO3 request failed for "
+                f"{url}: {error}"
+            ) from error
+
+        status_code = response.status_code
+
+        retryable_status = (
+            status_code == 429
+            or status_code == 408
+            or 500 <= status_code <= 599
+        )
+
+        if retryable_status:
+            last_error = (
+                f"HTTP {status_code}"
+            )
+
+            if attempt < MAX_ATTEMPTS:
+                print(
+                    "  AO3 returned "
+                    f"{status_code}; retrying..."
+                )
+
+                retry_delay = (
+                    RETRY_DELAY_SECONDS
+                )
+
+                retry_after = (
+                    response.headers.get(
+                        "Retry-After"
+                    )
+                )
+
+                if (
+                    retry_after
+                    and retry_after.isdigit()
+                ):
+                    retry_delay = max(
+                        retry_delay,
+                        int(retry_after),
+                    )
+
+                response.close()
+
+                time.sleep(
+                    retry_delay
+                )
+
+                continue
+
+            response.close()
+
+            raise RuntimeError(
+                "AO3 returned "
+                f"{status_code} after "
+                f"{MAX_ATTEMPTS} attempts "
+                f"for {url}."
+            )
+
+        try:
+            response.raise_for_status()
+
+        except requests.RequestException as error:
+            response.close()
+
+            raise RuntimeError(
+                f"AO3 request failed for "
+                f"{url}: {error}"
+            ) from error
+
+        return response
+
     raise RuntimeError(
-        f"AO3 timed out while fetching {url} "
-        f"after {MAX_ATTEMPTS} attempts"
-    ) from last_error
+        f"AO3 request failed for "
+        f"{url}: {last_error}"
+    )
+
+
+def fetch_work_stats(url):
+    separator = (
+        "&"
+        if "?" in url
+        else "?"
+    )
+
+    request_url = (
+        f"{url}"
+        f"{separator}"
+        f"view_adult=true"
+    )
+
+    response = fetch_ao3_page(
+        request_url
+    )
+
+    return parse_work_stats(
+        response.text
+    )
 
 
 def parse_work_stats(html):
@@ -357,9 +462,7 @@ def parse_chapter_metadata(
     return chapters
 
 
-def fetch_chapter_metadata(
-    url,
-):
+def fetch_chapter_metadata(url):
     base_url = (
         url.split("?", 1)[0]
         .rstrip("/")
@@ -385,51 +488,15 @@ def fetch_chapter_metadata(
         f"?view_adult=true"
     )
 
-    for attempt in range(
-        1,
-        MAX_ATTEMPTS + 1,
-    ):
-        time.sleep(
-            REQUEST_DELAY_SECONDS
-        )
+    response = fetch_ao3_page(
+        navigate_url
+    )
 
-        try:
-            response = requests.get(
-                navigate_url,
-                headers=HEADERS,
-                timeout=(
-                    CONNECT_TIMEOUT_SECONDS,
-                    READ_TIMEOUT_SECONDS,
-                ),
-            )
 
-            response.raise_for_status()
-
-            return parse_chapter_metadata(
-                response.text,
-                ao3_work_id,
-            )
-
-        except requests.Timeout:
-            if attempt < MAX_ATTEMPTS:
-                time.sleep(
-                    RETRY_DELAY_SECONDS
-                )
-                continue
-
-            raise RuntimeError(
-                f"AO3 timed out while fetching "
-                f"chapter metadata for "
-                f"{base_url}."
-            )
-
-        except requests.RequestException as error:
-            raise RuntimeError(
-                f"Could not fetch AO3 chapter "
-                f"metadata for {base_url}: "
-                f"{error}"
-            )
-
+    return parse_chapter_metadata(
+        response.text,
+        ao3_work_id,
+    )
 
 def parse_user_works_page(html):
     soup = BeautifulSoup(
