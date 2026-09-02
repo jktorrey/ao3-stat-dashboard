@@ -880,14 +880,21 @@ def render_history(work_id):
             if event["date_precision"] == "date":
                 has_date_only_events = True
 
+                parsed_event = pd.to_datetime(
+                    event["occurred_at"],
+                    format="mixed",
+                )
+
+                event_date = parsed_event.date()
+
                 event_time = pd.Timestamp(
-                    event["occurred_at"]
+                    event_date
+                ).tz_localize(
+                    LOCAL_TIMEZONE
                 )
 
                 event_time = (
-                    event_time.tz_localize(
-                        LOCAL_TIMEZONE
-                    )
+                    event_time
                     + pd.Timedelta(hours=12)
                 )
 
@@ -949,12 +956,13 @@ def render_history(work_id):
                     row["date_precision"]
                     == "date"
                 ):
-                    event_date = pd.Timestamp(
-                        row["occurred_at"]
+                    parsed_date = pd.to_datetime(
+                        row["occurred_at"],
+                        format="mixed",
                     )
 
                     return (
-                        event_date.strftime(
+                        parsed_date.strftime(
                             "%b %d, %Y"
                         )
                         + " (date only)"
@@ -1003,6 +1011,8 @@ def render_history(work_id):
                         "Manual",
                     "ao3_detected":
                         "AO3 detected",
+                    "ao3_backfill":
+                        "AO3 backfill",
                 })
                 .fillna(
                     event_table["source"]

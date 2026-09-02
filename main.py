@@ -17,11 +17,16 @@ from database import (
     get_events_for_work,
     update_event,
     delete_event,
+    event_type_exists,
+    chapter_event_exists,
 )
 
 from collection import collect_all_stats
 from csv_importer import import_historical_csv
-
+from collector import (
+    fetch_work_stats,
+    fetch_chapter_metadata,
+)
 
 def list_works():
     works = get_all_works()
@@ -1055,6 +1060,184 @@ def delete_work_event():
     print()
 
 
+def backfill_work_events():
+    selected_work = select_work(
+        "Enter the number of the work: "
+    )
+
+    if selected_work is None:
+        return
+
+    (
+        work_id,
+        ao3_work_id,
+        title,
+        url,
+    ) = selected_work
+
+    print()
+    print(
+        f'Backfilling AO3 events for "{title}"...'
+    )
+    print()
+
+    try:
+        stats = fetch_work_stats(url)
+
+    except Exception as error:
+        print(
+            f"Could not retrieve AO3 work "
+            f"metadata: {error}"
+        )
+        print()
+        return
+
+    try:
+        chapters = fetch_chapter_metadata(
+            url
+        )
+
+    except Exception as error:
+        print(
+            f"Could not retrieve AO3 chapter "
+            f"metadata: {error}"
+        )
+        print()
+        return
+
+    created = 0
+    skipped = 0
+
+    published_date = stats.get(
+        "published_date"
+    )
+
+    if published_date:
+        if event_type_exists(
+            work_id,
+            "work_published",
+        ):
+            print(
+                "Work publication event "
+                "already exists; skipping."
+            )
+
+            skipped += 1
+
+        else:
+            add_event(
+                work_id=work_id,
+                occurred_at=published_date,
+                event_type="work_published",
+                description=(
+                    "Historical publication date "
+                    "retrieved from AO3."
+                ),
+                source="ao3_backfill",
+                date_source="ao3_published",
+                date_precision="date",
+            )
+
+            created += 1
+
+            print(
+                "Added work publication event: "
+                f"{published_date}"
+            )
+
+    else:
+        print(
+            "AO3 publication date was not "
+            "available; no publication event "
+            "was created."
+        )
+
+    for chapter in chapters:
+        chapter_number = chapter.get(
+            "chapter_number"
+        )
+
+        if chapter_number is None:
+            continue
+
+        # Chapter 1 is represented by the
+        # work-published event.
+        if chapter_number == 1:
+            continue
+
+        if chapter_event_exists(
+            work_id,
+            chapter_number,
+        ):
+            print(
+                f"Chapter {chapter_number} "
+                "already has an event; skipping."
+            )
+
+            skipped += 1
+            continue
+
+        published_date = chapter.get(
+            "published_date"
+        )
+
+        if not published_date:
+            print(
+                f"Chapter {chapter_number} "
+                "has no readable AO3 date; "
+                "skipping."
+            )
+
+            skipped += 1
+            continue
+
+        chapter_title = chapter.get(
+            "title"
+        )
+
+        if chapter_title:
+            description = (
+                f"{chapter_title} — "
+                "Historical publication date "
+                "retrieved from AO3."
+            )
+
+        else:
+            description = (
+                "Historical publication date "
+                "retrieved from AO3."
+            )
+
+        add_event(
+            work_id=work_id,
+            occurred_at=published_date,
+            event_type="chapter_published",
+            chapter_number=chapter_number,
+            description=description,
+            source="ao3_backfill",
+            date_source="ao3_chapter_date",
+            date_precision="date",
+        )
+
+        created += 1
+
+        print(
+            f"Added Chapter "
+            f"{chapter_number}: "
+            f"{published_date}"
+        )
+
+    print()
+    print("Backfill complete.")
+    print(
+        f"  Events created: {created}"
+    )
+    print(
+        f"  Existing/unavailable: {skipped}"
+    )
+    print()
+
+
 def main():
     initialize_database()
 
@@ -1080,7 +1263,8 @@ def main():
         print("12. View work events")
         print("13. Edit work event")
         print("14. Delete work event")
-        print("15. Exit")
+        print("15. Backfill AO3 events")
+        print("16. Exit")
         print()
 
         choice = input(
@@ -1196,6 +1380,9 @@ def main():
             delete_work_event()
 
         elif choice == "15":
+            backfill_work_events()
+
+        elif choice == "16":
             print("Goodbye.")
             break
 

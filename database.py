@@ -2,7 +2,6 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-
 DATABASE_NAME = Path(__file__).resolve().parent / "ao3_stats.db"
 
 
@@ -655,3 +654,74 @@ def delete_event(event_id):
 
     connection.commit()
     connection.close()
+
+
+def get_latest_public_chapter_count(work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT chapters_published
+        FROM snapshots
+        WHERE work_id = ?
+          AND source = 'ao3_public'
+        ORDER BY collected_at DESC, id DESC
+        LIMIT 1
+    """, (work_id,))
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return row[0]
+
+
+def chapter_event_exists(
+    work_id,
+    chapter_number,
+):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT 1
+        FROM events
+        WHERE work_id = ?
+          AND event_type = 'chapter_published'
+          AND chapter_number = ?
+        LIMIT 1
+    """, (
+        work_id,
+        chapter_number,
+    ))
+
+    exists = cursor.fetchone() is not None
+
+    connection.close()
+
+    return exists
+
+
+def event_type_exists(
+    work_id,
+    event_type,
+):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT 1
+        FROM events
+        WHERE work_id = ?
+          AND event_type = ?
+        LIMIT 1
+    """, (
+        work_id,
+        event_type,
+    ))
+
+    exists = cursor.fetchone() is not None
+
+    connection.close()
+
+    return exists
