@@ -2,6 +2,7 @@ import time
 from datetime import date
 import requests
 from bs4 import BeautifulSoup
+import re
 
 
 HEADERS = {
@@ -254,3 +255,176 @@ def parse_ao3_date(value):
 
     except ValueError:
         return None
+
+
+
+def parse_chapter_metadata(
+    html,
+    ao3_work_id,
+):
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
+
+    chapter_pattern = re.compile(
+        rf"^/works/{ao3_work_id}/chapters/\d+$"
+    )
+
+    chapter_links = soup.find_all(
+        "a",
+        href=chapter_pattern,
+    )
+
+    seen_urls = set()
+    chapters = []
+
+    for chapter_link in chapter_links:
+        chapter_url = chapter_link.get(
+            "href"
+        )
+
+        if chapter_url in seen_urls:
+            continue
+
+        seen_urls.add(chapter_url)
+
+        chapter_match = re.search(
+            r"/chapters/(\d+)$",
+            chapter_url,
+        )
+
+        if chapter_match:
+            chapter_id = int(
+                chapter_match.group(1)
+            )
+        else:
+            chapter_id = None
+
+        title = chapter_link.get_text(
+            " ",
+            strip=True,
+        )
+
+        title = re.sub(
+            r"^\d+\.\s*",
+            "",
+            title,
+        )
+
+        container = (
+            chapter_link.find_parent("li")
+        )
+
+        date_element = None
+
+        if container is not None:
+            date_element = (
+                container.select_one(
+                    "span.datetime"
+                )
+            )
+
+        published_date = None
+
+        if date_element is not None:
+            raw_date = (
+                date_element.get_text(
+                    " ",
+                    strip=True,
+                )
+                .strip("()")
+            )
+
+            published_date = (
+                parse_ao3_date(
+                    raw_date
+                )
+            )
+
+        chapters.append({
+            "chapter_number":
+                len(chapters) + 1,
+            "chapter_id":
+                chapter_id,
+            "title":
+                title,
+            "published_date":
+                published_date,
+        })
+
+    return chapters
+
+
+def fetch_chapter_metadata(
+    url,
+):
+    base_url = (
+        url.split("?", 1)[0]
+        .rstrip("/")
+    )
+
+    work_id_match = re.search(
+        r"/works/(\d+)$",
+        base_url,
+    )
+
+    if work_id_match is None:
+        raise ValueError(
+            f"Could not determine AO3 work ID "
+            f"from URL: {url}"
+        )
+
+    ao3_work_id = (
+        work_id_match.group(1)
+    )
+
+    navigate_url = (
+        f"{base_url}/navigate"
+        f"?view_adult=true"
+    )
+
+    for attempt in range(
+        1,
+        MAX_ATTEMPTS + 1,
+    ):
+        time.sleep(
+            REQUEST_DELAY_SECONDS
+        )
+
+        try:
+            response = requests.get(
+                navigate_url,
+                headers=HEADERS,
+                timeout=(
+                    CONNECT_TIMEOUT_SECONDS,
+                    READ_TIMEOUT_SECONDS,
+                ),
+            )
+
+            response.raise_for_status()
+
+            return parse_chapter_metadata(
+                response.text,
+                ao3_work_id,
+            )
+
+        except requests.Timeout:
+            if attempt < MAX_ATTEMPTS:
+                time.sleep(
+                    RETRY_DELAY_SECONDS
+                )
+                continue
+
+            raise RuntimeError(
+                f"AO3 timed out while fetching "
+                f"chapter metadata for "
+                f"{base_url}."
+            )
+
+        except requests.RequestException as error:
+            raise RuntimeError(
+                f"Could not fetch AO3 chapter "
+                f"metadata for {base_url}: "
+                f"{error}"
+            )
