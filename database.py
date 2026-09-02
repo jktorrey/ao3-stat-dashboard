@@ -725,3 +725,27 @@ def event_type_exists(
     connection.close()
 
     return exists
+
+
+def get_latest_public_chapter_state(work_id):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT
+            chapters_published,
+            chapters_total
+        FROM snapshots
+        WHERE work_id = ?
+          AND source = 'ao3_public'
+        ORDER BY collected_at DESC, id DESC
+        LIMIT 1
+    """, (work_id,))
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None, None
+
+    return row[0], row[1]

@@ -1030,6 +1030,8 @@ def render_history(work_id):
                         "AO3 chapter date",
                     "ao3_updated":
                         "AO3 updated date",
+                    "ao3_completed":
+                        "AO3 completed date",
                     "collector_detected":
                         "Collector detection",
                 })
