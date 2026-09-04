@@ -11,6 +11,7 @@ from dashboard_data import (
     get_work_count,
     get_work_history,
     get_work_events,
+    get_system_health,
 )
 
 
@@ -151,6 +152,11 @@ def render_overview(
         total_bookmarks_change = None
 
     st.subheader("Overview")
+
+    render_system_health()
+
+    st.divider()
+
 
     column1, column2, column3 = st.columns(3)
 
@@ -1067,6 +1073,142 @@ def render_history(work_id):
                 event_table,
                 hide_index=True,
                 use_container_width=True,
+            )
+
+
+def render_system_health():
+    health = get_system_health()
+
+    with st.expander(
+        "System health",
+        expanded=True,
+    ):
+        column1, column2 = (
+            st.columns(2)
+        )
+
+        with column1:
+            st.metric(
+                "Latest live snapshot",
+                (
+                    display_timestamp(
+                        health[
+                            "latest_public_snapshot"
+                        ]
+                    )
+                    if health[
+                        "latest_public_snapshot"
+                    ]
+                    else "—"
+                ),
+            )
+
+            interval = health[
+                "collection_interval_hours"
+            ]
+
+            if interval is not None:
+                st.caption(
+                    "Configured collection "
+                    f"interval: {interval} hours"
+                )
+
+        with column2:
+            st.metric(
+                "Last scheduled cycle",
+                (
+                    display_timestamp(
+                        health[
+                            "last_scheduled_collection"
+                        ]
+                    )
+                    if health[
+                        "last_scheduled_collection"
+                    ]
+                    else "—"
+                ),
+            )
+
+        column3, column4 = (
+            st.columns(2)
+        )
+
+        with column3:
+            st.metric(
+                "Last daily email",
+                (
+                    display_timestamp(
+                        health[
+                            "last_daily_summary"
+                        ]
+                    )
+                    if health[
+                        "last_daily_summary"
+                    ]
+                    else "—"
+                ),
+            )
+
+        with column4:
+            st.metric(
+                "Latest database backup",
+                (
+                    display_timestamp(
+                        health[
+                            "latest_backup"
+                        ]
+                    )
+                    if health[
+                        "latest_backup"
+                    ]
+                    else "—"
+                ),
+            )
+
+            st.caption(
+                "Stored backups: "
+                f"{health['backup_count']}"
+            )
+
+            if health[
+                "latest_backup_name"
+            ]:
+                st.caption(
+                    health[
+                        "latest_backup_name"
+                    ]
+                )
+
+        st.divider()
+
+        if health[
+            "latest_log_activity"
+        ]:
+            st.caption(
+                "Latest operational log "
+                "activity: "
+                + display_timestamp(
+                    health[
+                        "latest_log_activity"
+                    ]
+                )
+            )
+
+        latest_error = health[
+            "latest_error"
+        ]
+
+        if latest_error:
+            st.warning(
+                "Most recent logged error:\n\n"
+                f"{latest_error}"
+            )
+
+        else:
+            st.success(
+                "No ERROR-level entries "
+                "found in the current "
+                "operational log."
             )
 
 

@@ -4,6 +4,14 @@ from datetime import (
     timezone,
 )
 
+from app_logging import (
+    capture_output,
+)
+
+from database_backup import (
+    backup_database,
+)
+
 from collection import collect_all_stats
 
 from discovery import (
@@ -122,7 +130,7 @@ def run_scheduled_cycle():
     }
 
 
-def main():
+def run():
     initialize_database()
 
     interval_hours = (
@@ -174,17 +182,35 @@ def main():
 
     run_scheduled_cycle()
 
-    # Record that the scheduled cycle was
-    # attempted even if AO3 had transient
-    # failures. This prevents the Windows
-    # task from retrying every 15 minutes
-    # during an AO3 outage.
+    print()
+    print(
+        "Checking daily database backup..."
+    )
+
+    try:
+        backup_database()
+
+    except Exception as error:
+        print(
+            "Database backup failed: "
+            f"{error}"
+        )
+
+    # The backup is intentionally independent
+    # of the collection timestamp. A backup
+    # failure should not cause Windows to rerun
+    # the entire AO3 cycle every 15 minutes.
     set_last_scheduled_collection()
 
     print(
         "Scheduled collection timestamp "
         "updated."
     )
+
+
+def main():
+    with capture_output():
+        run()
 
 
 if __name__ == "__main__":

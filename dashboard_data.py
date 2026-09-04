@@ -1,5 +1,5 @@
 import sqlite3
-
+from pathlib import Path
 import pandas as pd
 
 from database import DATABASE_NAME
@@ -360,3 +360,185 @@ def get_work_events(work_id):
     connection.close()
 
     return events
+
+
+def get_system_health():
+    connection = sqlite3.connect(
+        DATABASE_NAME
+    )
+
+    public_snapshots = pd.read_sql_query(
+        """
+        SELECT collected_at
+        FROM snapshots
+        WHERE source = 'ao3_public'
+        """,
+        connection,
+    )
+
+    settings_rows = connection.execute("""
+        SELECT key, value
+        FROM settings
+        WHERE key IN (
+            'collection_interval_hours',
+            'last_scheduled_collection',
+            'last_daily_summary'
+        )
+    """).fetchall()
+
+    connection.close()
+
+    settings = {
+        key: value
+        for key, value in settings_rows
+    }
+
+    latest_public_snapshot = None
+
+    if not public_snapshots.empty:
+        parsed_times = pd.to_datetime(
+            public_snapshots[
+                "collected_at"
+            ],
+            format="mixed",
+            utc=True,
+            errors="coerce",
+        )
+
+        parsed_times = (
+            parsed_times.dropna()
+        )
+
+        if not parsed_times.empty:
+            latest_public_snapshot = (
+                parsed_times.max()
+                .isoformat()
+            )
+
+    project_dir = (
+        Path(__file__)
+        .resolve()
+        .parent
+    )
+
+    backup_dir = (
+        project_dir / "backups"
+    )
+
+    backup_files = []
+
+    if backup_dir.exists():
+        backup_files = sorted(
+            backup_dir.glob(
+                "ao3_stats_*.db"
+            ),
+            key=lambda path:
+                path.stat().st_mtime,
+            reverse=True,
+        )
+
+    latest_backup = None
+    latest_backup_name = None
+
+    if backup_files:
+        latest_backup_file = (
+            backup_files[0]
+        )
+
+        latest_backup_name = (
+            latest_backup_file.name
+        )
+
+        latest_backup = pd.Timestamp(
+            latest_backup_file
+            .stat()
+            .st_mtime,
+            unit="s",
+            tz="UTC",
+        ).isoformat()
+
+    log_file = (
+        project_dir
+        / "logs"
+        / "ao3_dashboard.log"
+    )
+
+    latest_log_activity = None
+    latest_error = None
+
+    if log_file.exists():
+        latest_log_activity = (
+            pd.Timestamp(
+                log_file.stat().st_mtime,
+                unit="s",
+                tz="UTC",
+            )
+            .isoformat()
+        )
+
+        try:
+            with log_file.open(
+                "r",
+                encoding="utf-8",
+            ) as handle:
+                lines = handle.readlines()
+
+            for line in reversed(lines):
+                if " ERROR " in line:
+                    latest_error = (
+                        line.strip()
+                    )
+                    break
+
+        except OSError:
+            latest_error = (
+                "Could not read operational log."
+            )
+
+    interval_value = settings.get(
+        "collection_interval_hours"
+    )
+
+    try:
+        collection_interval = int(
+            interval_value
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        collection_interval = None
+
+    return {
+        "latest_public_snapshot":
+            latest_public_snapshot,
+
+        "last_scheduled_collection":
+            settings.get(
+                "last_scheduled_collection"
+            ),
+
+        "collection_interval_hours":
+            collection_interval,
+
+        "last_daily_summary":
+            settings.get(
+                "last_daily_summary"
+            ),
+
+        "latest_backup":
+            latest_backup,
+
+        "latest_backup_name":
+            latest_backup_name,
+
+        "backup_count":
+            len(backup_files),
+
+        "latest_log_activity":
+            latest_log_activity,
+
+        "latest_error":
+            latest_error,
+    }
