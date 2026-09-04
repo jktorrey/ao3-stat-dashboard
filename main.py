@@ -1,5 +1,9 @@
 from datetime import datetime, timezone
 
+from email_summary import (
+    send_daily_summary_email,
+)
+
 from database import (
     initialize_database,
     add_work,
@@ -19,6 +23,10 @@ from database import (
     delete_event,
     event_type_exists,
     chapter_event_exists,
+    get_daily_summary_recipient,
+    set_daily_summary_recipient,
+    get_daily_summary_time,
+    set_daily_summary_time,
 )
 
 from collection import collect_all_stats
@@ -1238,6 +1246,147 @@ def backfill_work_events():
     print()
 
 
+def configure_daily_summary():
+    current_recipient = (
+        get_daily_summary_recipient()
+    )
+
+    current_time = (
+        get_daily_summary_time()
+    )
+
+    print("Daily summary settings")
+    print()
+
+    print(
+        "Current recipient: "
+        f"{current_recipient or 'Not set'}"
+    )
+
+    print(
+        "Current delivery time: "
+        f"{current_time or 'Not set'}"
+    )
+
+    print()
+    print(
+        "Press Enter to keep the "
+        "current value."
+    )
+    print()
+
+    recipient = input(
+        "Recipient email address: "
+    ).strip()
+
+    if recipient:
+        if (
+            "@" not in recipient
+            or "." not in recipient.split(
+                "@",
+                1,
+            )[-1]
+        ):
+            print(
+                "That does not look like "
+                "a valid email address."
+            )
+            print()
+            return
+
+        set_daily_summary_recipient(
+            recipient
+        )
+
+    while True:
+        summary_time = input(
+            "Delivery time "
+            "(24-hour HH:MM): "
+        ).strip()
+
+        if not summary_time:
+            break
+
+        try:
+            parsed_time = (
+                datetime.strptime(
+                    summary_time,
+                    "%H:%M",
+                )
+            )
+
+            normalized_time = (
+                parsed_time.strftime(
+                    "%H:%M"
+                )
+            )
+
+            set_daily_summary_time(
+                normalized_time
+            )
+
+            break
+
+        except ValueError:
+            print(
+                "Please enter the time "
+                "as HH:MM, for example "
+                "08:30 or 19:00."
+            )
+
+    print()
+    print("Daily summary settings saved.")
+    print()
+
+    print(
+        "Recipient: "
+        f"{get_daily_summary_recipient() or 'Not set'}"
+    )
+
+    print(
+        "Delivery time: "
+        f"{get_daily_summary_time() or 'Not set'}"
+    )
+
+    print()
+
+
+def send_test_daily_summary():
+    print(
+        "Sending daily summary..."
+    )
+    print()
+
+    try:
+        result = (
+            send_daily_summary_email()
+        )
+
+    except Exception as error:
+        print(
+            f"Email failed: {error}"
+        )
+        print()
+
+        return
+
+    print(
+        "Email sent successfully."
+    )
+
+    print(
+        "Recipient: "
+        f"{result['recipient']}"
+    )
+
+    print(
+        "Subject: "
+        f"{result['subject']}"
+    )
+
+    print()
+
+
 def main():
     initialize_database()
 
@@ -1248,24 +1397,21 @@ def main():
         print("1. Add work")
         print("2. List works")
         print("3. Edit work")
-        print(
-            "4. Fetch and save current stats"
-        )
+        print("4. Fetch and save current stats")
         print("5. Enter manual snapshot")
         print("6. Import historical CSV")
         print("7. View snapshots")
         print("8. Collection interval")
         print("9. Database cleanup")
-        print(
-            "10. Change NULL stats to 0"
-        )
+        print("10. Change NULL stats to 0"        )
         print("11. Add work event")
         print("12. View work events")
         print("13. Edit work event")
         print("14. Delete work event")
         print("15. Backfill AO3 events")
-        print("16. Exit")
-        print()
+        print("16. Daily summary settings")
+        print("17. Send test daily summary")
+        print("18. Exit")
 
         choice = input(
             "Choose an option: "
@@ -1383,6 +1529,12 @@ def main():
             backfill_work_events()
 
         elif choice == "16":
+            configure_daily_summary()
+
+        elif choice == "17":
+            send_test_daily_summary()
+
+        elif choice == "18":
             print("Goodbye.")
             break
 

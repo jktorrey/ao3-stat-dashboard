@@ -749,3 +749,137 @@ def get_latest_public_chapter_state(work_id):
         return None, None
 
     return row[0], row[1]
+
+
+def get_daily_summary_recipient():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'daily_summary_recipient'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    value = row[0].strip()
+
+    return value if value else None
+
+
+def set_daily_summary_recipient(recipient):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (
+            key,
+            value
+        )
+        VALUES (
+            'daily_summary_recipient',
+            ?
+        )
+        ON CONFLICT(key)
+        DO UPDATE SET
+            value = excluded.value
+    """, (recipient,))
+
+    connection.commit()
+    connection.close()
+
+
+def get_daily_summary_time():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'daily_summary_time'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    value = row[0].strip()
+
+    return value if value else None
+
+
+def set_daily_summary_time(summary_time):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (
+            key,
+            value
+        )
+        VALUES (
+            'daily_summary_time',
+            ?
+        )
+        ON CONFLICT(key)
+        DO UPDATE SET
+            value = excluded.value
+    """, (summary_time,))
+
+    connection.commit()
+    connection.close()
+
+
+def get_last_daily_summary():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'last_daily_summary'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    value = row[0].strip()
+
+    return value if value else None
+
+
+def set_last_daily_summary(timestamp=None):
+    if timestamp is None:
+        timestamp = datetime.now(
+            timezone.utc
+        )
+
+    if isinstance(timestamp, datetime):
+        timestamp = timestamp.isoformat()
+
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (
+            key,
+            value
+        )
+        VALUES (
+            'last_daily_summary',
+            ?
+        )
+        ON CONFLICT(key)
+        DO UPDATE SET
+            value = excluded.value
+    """, (timestamp,))
+
+    connection.commit()
+    connection.close()
