@@ -2,41 +2,52 @@ import html
 import os
 from datetime import datetime
 
+import keyring
 import resend
 
 from daily_summary import build_daily_summary
 
 from database import (
     get_daily_summary_recipient,
+    get_daily_summary_sender,
 )
 
 
+KEYRING_SERVICE = "ao3-stat-dashboard"
+KEYRING_USERNAME = "resend_api_key"
+
+
 def get_resend_config():
+    # Environment variable remains useful
+    # for temporary/manual development.
     api_key = os.environ.get(
         "RESEND_API_KEY"
     )
 
-    sender = os.environ.get(
-        "AO3_RESEND_FROM"
+    # For unattended Windows operation,
+    # retrieve the secret from Credential
+    # Locker if no environment variable exists.
+    if not api_key:
+        api_key = keyring.get_password(
+            KEYRING_SERVICE,
+            KEYRING_USERNAME,
+        )
+
+    sender = (
+        get_daily_summary_sender()
     )
 
-    missing = []
-
     if not api_key:
-        missing.append(
-            "RESEND_API_KEY"
+        raise RuntimeError(
+            "Resend API key was not found "
+            "in the environment or Windows "
+            "Credential Locker."
         )
 
     if not sender:
-        missing.append(
-            "AO3_RESEND_FROM"
-        )
-
-    if missing:
         raise RuntimeError(
-            "Missing Resend environment "
-            "variable(s): "
-            + ", ".join(missing)
+            "Daily summary sender "
+            "has not been configured."
         )
 
     return {

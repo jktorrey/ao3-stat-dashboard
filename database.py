@@ -883,3 +883,45 @@ def set_last_daily_summary(timestamp=None):
 
     connection.commit()
     connection.close()
+
+
+def get_daily_summary_sender():
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'daily_summary_sender'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    value = row[0].strip()
+
+    return value if value else None
+
+
+def set_daily_summary_sender(sender):
+    connection = sqlite3.connect(DATABASE_NAME)
+
+    connection.execute("""
+        INSERT INTO settings (
+            key,
+            value
+        )
+        VALUES (
+            'daily_summary_sender',
+            ?
+        )
+        ON CONFLICT(key)
+        DO UPDATE SET
+            value = excluded.value
+    """, (sender,))
+
+    connection.commit()
+    connection.close()

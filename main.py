@@ -27,6 +27,8 @@ from database import (
     set_daily_summary_recipient,
     get_daily_summary_time,
     set_daily_summary_time,
+    get_daily_summary_sender,
+    set_daily_summary_sender,
 )
 
 from collection import collect_all_stats
@@ -1251,12 +1253,21 @@ def configure_daily_summary():
         get_daily_summary_recipient()
     )
 
+    current_sender = (
+        get_daily_summary_sender()
+    )
+
     current_time = (
         get_daily_summary_time()
     )
 
     print("Daily summary settings")
     print()
+
+    print(
+        "Current sender: "
+        f"{current_sender or 'Not set'}"
+    )
 
     print(
         "Current recipient: "
@@ -1274,6 +1285,29 @@ def configure_daily_summary():
         "current value."
     )
     print()
+
+    sender = input(
+        "Sender email address: "
+    ).strip()
+
+    if sender:
+        if (
+            "@" not in sender
+            or "." not in sender.split(
+                "@",
+                1,
+            )[-1]
+        ):
+            print(
+                "That does not look like "
+                "a valid sender address."
+            )
+            print()
+            return
+
+        set_daily_summary_sender(
+            sender
+        )
 
     recipient = input(
         "Recipient email address: "
@@ -1337,6 +1371,11 @@ def configure_daily_summary():
     print()
     print("Daily summary settings saved.")
     print()
+
+    print(
+        "Sender: "
+        f"{get_daily_summary_sender() or 'Not set'}"
+    )
 
     print(
         "Recipient: "
