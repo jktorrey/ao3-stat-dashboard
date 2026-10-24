@@ -17,6 +17,10 @@ from database_backup import (
     backup_database,
 )
 
+from collector import (
+    reset_ao3_transport_state,
+)
+
 from collection import collect_all_stats
 
 from discovery import (
@@ -28,27 +32,40 @@ from database import (
     get_collection_interval,
     get_last_scheduled_collection,
     set_last_scheduled_collection,
+    get_collection_retry_after,
+    set_collection_retry_after,
+    clear_collection_retry_after,
 )
+
+
+FAILURE_RETRY_MINUTES = 60
 
 
 def parse_timestamp(value):
     if value is None:
         return None
 
-    if isinstance(value, datetime):
+    if isinstance(
+        value,
+        datetime,
+    ):
         timestamp = value
 
     else:
-        timestamp = datetime.fromisoformat(
-            value.replace(
-                "Z",
-                "+00:00",
+        timestamp = (
+            datetime.fromisoformat(
+                value.replace(
+                    "Z",
+                    "+00:00",
+                )
             )
         )
 
     if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(
-            tzinfo=timezone.utc
+        timestamp = (
+            timestamp.replace(
+                tzinfo=timezone.utc
+            )
         )
 
     return timestamp.astimezone(
@@ -68,8 +85,10 @@ def get_next_collection_time():
     if last_collection is None:
         return None
 
-    last_collection = parse_timestamp(
-        last_collection
+    last_collection = (
+        parse_timestamp(
+            last_collection
+        )
     )
 
     return (
@@ -84,6 +103,8 @@ def run_collection_cycle(
     trigger="scheduled",
 ):
     with collection_lock():
+        reset_ao3_transport_state()
+
         print(
             f"Running {trigger} AO3 cycle..."
         )
@@ -104,7 +125,8 @@ def run_collection_cycle(
 
             print(
                 "Collection encountered "
-                f"an unexpected error: {error}"
+                "an unexpected error: "
+                f"{error}"
             )
             print()
 
@@ -123,7 +145,8 @@ def run_collection_cycle(
 
             print(
                 "Work discovery encountered "
-                f"an unexpected error: {error}"
+                "an unexpected error: "
+                f"{error}"
             )
             print()
 
@@ -150,11 +173,76 @@ def run_collection_cycle(
                 f"{error}"
             )
 
-        set_last_scheduled_collection()
-
-        print(
-            "Collection timestamp updated."
+        now = datetime.now(
+            timezone.utc
         )
+
+        total_failure = False
+
+        if collection_result is None:
+            total_failure = True
+
+        else:
+            saved = (
+                collection_result.get(
+                    "saved",
+                    0,
+                )
+            )
+
+            failed = (
+                collection_result.get(
+                    "failed",
+                    0,
+                )
+            )
+
+            total_failure = (
+                saved == 0
+                and failed > 0
+            )
+
+        retry_after = None
+
+        if total_failure:
+            retry_after = (
+                now
+                + timedelta(
+                    minutes=(
+                        FAILURE_RETRY_MINUTES
+                    )
+                )
+            )
+
+            set_collection_retry_after(
+                retry_after
+            )
+
+            print(
+                "No snapshots were saved."
+            )
+
+            print(
+                "Normal collection interval "
+                "was not reset."
+            )
+
+            print(
+                "Automatic retry will become "
+                "eligible at "
+                f"{retry_after.isoformat()}."
+            )
+
+        else:
+            clear_collection_retry_after()
+
+            set_last_scheduled_collection(
+                now
+            )
+
+            print(
+                "Collection timestamp updated."
+            )
 
         return {
             "collection":
@@ -165,6 +253,13 @@ def run_collection_cycle(
 
             "backup":
                 backup_result,
+
+            "retry_after":
+                (
+                    retry_after.isoformat()
+                    if retry_after
+                    else None
+                ),
         }
 
 
@@ -179,39 +274,92 @@ def run():
         timezone.utc
     )
 
-    next_collection = (
-        get_next_collection_time()
+    retry_after = (
+        get_collection_retry_after()
     )
 
-    if (
-        next_collection is not None
-        and now < next_collection
-    ):
-        remaining = (
-            next_collection - now
+    retry_due = False
+
+    if retry_after is not None:
+        retry_after = (
+            parse_timestamp(
+                retry_after
+            )
         )
 
-        remaining_minutes = max(
-            1,
-            int(
-                remaining.total_seconds()
-                / 60
-            ),
+        if now < retry_after:
+            remaining = (
+                retry_after - now
+            )
+
+            remaining_minutes = max(
+                1,
+                int(
+                    remaining.total_seconds()
+                    / 60
+                ),
+            )
+
+            print(
+                "Collection is in failure "
+                "cooldown."
+            )
+
+            print(
+                "Approximately "
+                f"{remaining_minutes} minutes "
+                "until the next retry."
+            )
+
+            return
+
+        retry_due = True
+
+        print(
+            "Failure retry cooldown "
+            "has expired."
         )
 
         print(
-            "Scheduled collection is "
-            "not due yet."
+            "Retrying AO3 collection."
+        )
+        print()
+
+    if not retry_due:
+        next_collection = (
+            get_next_collection_time()
         )
 
-        print(
-            f"Approximately "
-            f"{remaining_minutes} minutes "
-            f"remaining in the "
-            f"{interval_hours}-hour interval."
-        )
+        if (
+            next_collection is not None
+            and now < next_collection
+        ):
+            remaining = (
+                next_collection - now
+            )
 
-        return
+            remaining_minutes = max(
+                1,
+                int(
+                    remaining.total_seconds()
+                    / 60
+                ),
+            )
+
+            print(
+                "Scheduled collection is "
+                "not due yet."
+            )
+
+            print(
+                f"Approximately "
+                f"{remaining_minutes} minutes "
+                f"remaining in the "
+                f"{interval_hours}-hour "
+                "interval."
+            )
+
+            return
 
     print(
         "Scheduled collection is due."

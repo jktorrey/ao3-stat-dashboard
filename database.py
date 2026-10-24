@@ -324,6 +324,67 @@ def set_last_scheduled_collection(timestamp=None):
     connection.close()
 
 
+def get_collection_retry_after():
+    connection = sqlite3.connect(
+        DATABASE_NAME
+    )
+
+    cursor = connection.execute("""
+        SELECT value
+        FROM settings
+        WHERE key = 'collection_retry_after'
+    """)
+
+    row = cursor.fetchone()
+
+    connection.close()
+
+    if row is None:
+        return None
+
+    return datetime.fromisoformat(
+        row[0]
+    )
+
+
+def set_collection_retry_after(
+    timestamp,
+):
+    connection = sqlite3.connect(
+        DATABASE_NAME
+    )
+
+    connection.execute("""
+        INSERT INTO settings (key, value)
+        VALUES (
+            'collection_retry_after',
+            ?
+        )
+        ON CONFLICT(key)
+        DO UPDATE
+        SET value = excluded.value
+    """, (
+        timestamp.isoformat(),
+    ))
+
+    connection.commit()
+    connection.close()
+
+
+def clear_collection_retry_after():
+    connection = sqlite3.connect(
+        DATABASE_NAME
+    )
+
+    connection.execute("""
+        DELETE FROM settings
+        WHERE key = 'collection_retry_after'
+    """)
+
+    connection.commit()
+    connection.close()
+
+
 def get_work_by_ao3_id(ao3_work_id):
     connection = sqlite3.connect(DATABASE_NAME)
 

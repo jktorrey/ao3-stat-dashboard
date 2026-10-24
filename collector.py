@@ -1,30 +1,188 @@
 import time
 from datetime import date
-import requests
-from bs4 import BeautifulSoup
 import re
 from urllib.parse import urljoin
 
+import requests
+from bs4 import BeautifulSoup
+
 
 HEADERS = {
-    "User-Agent": "ao3-stat-dashboard/0.1 (personal stats tracker)"
+    "User-Agent": (
+        "ao3-stat-dashboard/0.1 "
+        "(personal stats tracker)"
+    )
 }
 
 REQUEST_DELAY_SECONDS = 2
-RETRY_DELAY_SECONDS = 5
 
 CONNECT_TIMEOUT_SECONDS = 10
 READ_TIMEOUT_SECONDS = 15
 
 MAX_ATTEMPTS = 2
 
+SSL_ERROR_STATUSES = {
+    525,
+    526,
+}
 
-def fetch_ao3_page(url):
+SSL_CIRCUIT_THRESHOLD = 3
+
+RETRY_DELAYS = {
+    408: 30,
+    429: 60,
+    500: 30,
+    502: 60,
+    503: 60,
+    504: 120,
+    520: 60,
+    521: 120,
+    522: 120,
+    523: 120,
+    524: 120,
+}
+
+RETRYABLE_STATUSES = set(
+    RETRY_DELAYS.keys()
+)
+
+
+_consecutive_ssl_failures = 0
+_ssl_circuit_open = False
+
+
+class AO3TransportUnavailable(
+    RuntimeError
+):
+    pass
+
+
+class AO3CircuitOpen(
+    AO3TransportUnavailable
+):
+    pass
+
+
+def reset_ao3_transport_state():
+    global _consecutive_ssl_failures
+    global _ssl_circuit_open
+
+    _consecutive_ssl_failures = 0
+    _ssl_circuit_open = False
+
+
+def record_ssl_failure(
+    status_code,
+    response,
+):
+    global _consecutive_ssl_failures
+    global _ssl_circuit_open
+
+    _consecutive_ssl_failures += 1
+
+    cf_ray = response.headers.get(
+        "CF-Ray"
+    )
+
+    if (
+        _consecutive_ssl_failures
+        >= SSL_CIRCUIT_THRESHOLD
+    ):
+        _ssl_circuit_open = True
+
+    message = (
+        f"AO3 returned HTTP "
+        f"{status_code}"
+    )
+
+    if cf_ray:
+        message += (
+            f" (Cloudflare Ray "
+            f"{cf_ray})"
+        )
+
+    message += (
+        ". Cloudflare could not complete "
+        "the TLS connection to AO3's "
+        "origin server."
+    )
+
+    if _ssl_circuit_open:
+        message += (
+            " The AO3 transport circuit "
+            "has been opened after "
+            f"{_consecutive_ssl_failures} "
+            "consecutive 525/526 responses."
+        )
+
+    return message
+
+
+def reset_ssl_failure_count():
+    global _consecutive_ssl_failures
+
+    _consecutive_ssl_failures = 0
+
+
+def get_retry_delay(
+    response,
+    status_code,
+):
+    retry_after = (
+        response.headers.get(
+            "Retry-After"
+        )
+    )
+
+    if (
+        retry_after
+        and retry_after.isdigit()
+    ):
+        return int(
+            retry_after
+        )
+
+    return RETRY_DELAYS.get(
+        status_code,
+        30,
+    )
+
+
+def fetch_ao3_page(
+    url,
+    params=None,
+    connect_timeout=None,
+    read_timeout=None,
+    max_attempts=None,
+):
+    if _ssl_circuit_open:
+        raise AO3CircuitOpen(
+            "AO3 request skipped because "
+            "the transport circuit is open "
+            "after repeated HTTP 525/526 "
+            "responses."
+        )
+
+    if connect_timeout is None:
+        connect_timeout = (
+            CONNECT_TIMEOUT_SECONDS
+        )
+
+    if read_timeout is None:
+        read_timeout = (
+            READ_TIMEOUT_SECONDS
+        )
+
+    if max_attempts is None:
+        max_attempts = (
+            MAX_ATTEMPTS
+        )
+
     last_error = None
 
     for attempt in range(
         1,
-        MAX_ATTEMPTS + 1,
+        max_attempts + 1,
     ):
         time.sleep(
             REQUEST_DELAY_SECONDS
@@ -33,10 +191,11 @@ def fetch_ao3_page(url):
         try:
             response = requests.get(
                 url,
+                params=params,
                 headers=HEADERS,
                 timeout=(
-                    CONNECT_TIMEOUT_SECONDS,
-                    READ_TIMEOUT_SECONDS,
+                    connect_timeout,
+                    read_timeout,
                 ),
             )
 
@@ -46,15 +205,13 @@ def fetch_ao3_page(url):
         ) as error:
             last_error = error
 
-            if attempt < MAX_ATTEMPTS:
+            if attempt < max_attempts:
                 print(
                     "  AO3 connection problem; "
-                    "retrying..."
+                    "retrying after 30 seconds..."
                 )
 
-                time.sleep(
-                    RETRY_DELAY_SECONDS
-                )
+                time.sleep(30)
 
                 continue
 
@@ -69,43 +226,59 @@ def fetch_ao3_page(url):
                 f"{url}: {error}"
             ) from error
 
-        status_code = response.status_code
-
-        retryable_status = (
-            status_code == 429
-            or status_code == 408
-            or 500 <= status_code <= 599
+        status_code = (
+            response.status_code
         )
 
-        if retryable_status:
+        if (
+            status_code
+            in SSL_ERROR_STATUSES
+        ):
+            message = (
+                record_ssl_failure(
+                    status_code,
+                    response,
+                )
+            )
+
+            response.close()
+
+            # 525/526 are deliberately not
+            # retried immediately. Cloudflare
+            # categorizes them as origin TLS
+            # failures rather than transient
+            # HTTP failures.
+            raise AO3TransportUnavailable(
+                message
+            )
+
+        # Any response other than 525/526
+        # proves that Cloudflare successfully
+        # completed the TLS path to AO3.
+        reset_ssl_failure_count()
+
+        if (
+            status_code
+            in RETRYABLE_STATUSES
+        ):
             last_error = (
                 f"HTTP {status_code}"
             )
 
-            if attempt < MAX_ATTEMPTS:
+            if attempt < max_attempts:
+                retry_delay = (
+                    get_retry_delay(
+                        response,
+                        status_code,
+                    )
+                )
+
                 print(
                     "  AO3 returned "
-                    f"{status_code}; retrying..."
+                    f"{status_code}; "
+                    f"retrying after "
+                    f"{retry_delay} seconds..."
                 )
-
-                retry_delay = (
-                    RETRY_DELAY_SECONDS
-                )
-
-                retry_after = (
-                    response.headers.get(
-                        "Retry-After"
-                    )
-                )
-
-                if (
-                    retry_after
-                    and retry_after.isdigit()
-                ):
-                    retry_delay = max(
-                        retry_delay,
-                        int(retry_after),
-                    )
 
                 response.close()
 
@@ -120,7 +293,7 @@ def fetch_ao3_page(url):
             raise RuntimeError(
                 "AO3 returned "
                 f"{status_code} after "
-                f"{MAX_ATTEMPTS} attempts "
+                f"{max_attempts} attempts "
                 f"for {url}."
             )
 
@@ -160,9 +333,13 @@ def fetch_work_stats(url):
         request_url
     )
 
-    return parse_work_stats(
-        response.text
-    )
+    try:
+        return parse_work_stats(
+            response.text
+        )
+
+    finally:
+        response.close()
 
 
 def parse_work_stats(html):
@@ -179,7 +356,6 @@ def parse_work_stats(html):
         "word_count": None,
         "chapters_published": None,
         "chapters_total": None,
-
         "published_date": None,
         "updated_date": None,
         "completed_date": None,
@@ -206,12 +382,16 @@ def parse_work_stats(html):
         except ValueError:
             return None
 
-    hits = parse_integer("dd.hits")
+    hits = parse_integer(
+        "dd.hits"
+    )
 
     if hits is not None:
         stats["hits"] = hits
 
-    kudos = parse_integer("dd.kudos")
+    kudos = parse_integer(
+        "dd.kudos"
+    )
 
     if kudos is not None:
         stats["kudos"] = kudos
@@ -221,19 +401,23 @@ def parse_work_stats(html):
     )
 
     if comments is not None:
-        stats["comments"] = comments
+        stats["comments"] = (
+            comments
+        )
 
     bookmarks = parse_integer(
         "dd.bookmarks"
     )
 
     if bookmarks is not None:
-        stats["public_bookmarks"] = (
-            bookmarks
-        )
+        stats[
+            "public_bookmarks"
+        ] = bookmarks
 
     stats["word_count"] = (
-        parse_integer("dd.words")
+        parse_integer(
+            "dd.words"
+        )
     )
 
     chapters = soup.select_one(
@@ -241,8 +425,10 @@ def parse_work_stats(html):
     )
 
     if chapters is not None:
-        chapter_text = chapters.get_text(
-            strip=True
+        chapter_text = (
+            chapters.get_text(
+                strip=True
+            )
         )
 
         if "/" in chapter_text:
@@ -290,11 +476,11 @@ def parse_work_stats(html):
     )
 
     if published_element is not None:
-        stats["published_date"] = (
-            parse_ao3_date(
-                published_element.get_text(
-                    strip=True
-                )
+        stats[
+            "published_date"
+        ] = parse_ao3_date(
+            published_element.get_text(
+                strip=True
             )
         )
 
@@ -335,15 +521,21 @@ def parse_work_stats(html):
             )
         )
 
-        if status_label == "updated":
-            stats["updated_date"] = (
-                status_date
-            )
+        if (
+            status_label
+            == "updated"
+        ):
+            stats[
+                "updated_date"
+            ] = status_date
 
-        elif status_label == "completed":
-            stats["completed_date"] = (
-                status_date
-            )
+        elif (
+            status_label
+            == "completed"
+        ):
+            stats[
+                "completed_date"
+            ] = status_date
 
     return stats
 
@@ -363,7 +555,6 @@ def parse_ao3_date(value):
         return None
 
 
-
 def parse_chapter_metadata(
     html,
     ao3_work_id,
@@ -374,7 +565,9 @@ def parse_chapter_metadata(
     )
 
     chapter_pattern = re.compile(
-        rf"^/works/{ao3_work_id}/chapters/\d+$"
+        rf"^/works/"
+        rf"{ao3_work_id}"
+        rf"/chapters/\d+$"
     )
 
     chapter_links = soup.find_all(
@@ -386,14 +579,18 @@ def parse_chapter_metadata(
     chapters = []
 
     for chapter_link in chapter_links:
-        chapter_url = chapter_link.get(
-            "href"
+        chapter_url = (
+            chapter_link.get(
+                "href"
+            )
         )
 
         if chapter_url in seen_urls:
             continue
 
-        seen_urls.add(chapter_url)
+        seen_urls.add(
+            chapter_url
+        )
 
         chapter_match = re.search(
             r"/chapters/(\d+)$",
@@ -404,12 +601,15 @@ def parse_chapter_metadata(
             chapter_id = int(
                 chapter_match.group(1)
             )
+
         else:
             chapter_id = None
 
-        title = chapter_link.get_text(
-            " ",
-            strip=True,
+        title = (
+            chapter_link.get_text(
+                " ",
+                strip=True,
+            )
         )
 
         title = re.sub(
@@ -419,7 +619,9 @@ def parse_chapter_metadata(
         )
 
         container = (
-            chapter_link.find_parent("li")
+            chapter_link.find_parent(
+                "li"
+            )
         )
 
         date_element = None
@@ -435,7 +637,8 @@ def parse_chapter_metadata(
 
         if date_element is not None:
             raw_date = (
-                date_element.get_text(
+                date_element
+                .get_text(
                     " ",
                     strip=True,
                 )
@@ -464,7 +667,10 @@ def parse_chapter_metadata(
 
 def fetch_chapter_metadata(url):
     base_url = (
-        url.split("?", 1)[0]
+        url.split(
+            "?",
+            1,
+        )[0]
         .rstrip("/")
     )
 
@@ -475,8 +681,8 @@ def fetch_chapter_metadata(url):
 
     if work_id_match is None:
         raise ValueError(
-            f"Could not determine AO3 work ID "
-            f"from URL: {url}"
+            "Could not determine AO3 "
+            f"work ID from URL: {url}"
         )
 
     ao3_work_id = (
@@ -484,7 +690,8 @@ def fetch_chapter_metadata(url):
     )
 
     navigate_url = (
-        f"{base_url}/navigate"
+        f"{base_url}"
+        f"/navigate"
         f"?view_adult=true"
     )
 
@@ -492,11 +699,15 @@ def fetch_chapter_metadata(url):
         navigate_url
     )
 
+    try:
+        return parse_chapter_metadata(
+            response.text,
+            ao3_work_id,
+        )
 
-    return parse_chapter_metadata(
-        response.text,
-        ao3_work_id,
-    )
+    finally:
+        response.close()
+
 
 def parse_user_works_page(html):
     soup = BeautifulSoup(
@@ -509,14 +720,19 @@ def parse_user_works_page(html):
     for work_blurb in soup.select(
         "li.work.blurb"
     ):
-        work_link = work_blurb.select_one(
-            'h4.heading a[href^="/works/"]'
+        work_link = (
+            work_blurb.select_one(
+                'h4.heading '
+                'a[href^="/works/"]'
+            )
         )
 
         if work_link is None:
             continue
 
-        href = work_link.get("href")
+        href = work_link.get(
+            "href"
+        )
 
         if not href:
             continue
@@ -533,18 +749,25 @@ def parse_user_works_page(html):
             work_match.group(1)
         )
 
-        title = work_link.get_text(
-            " ",
-            strip=True,
+        title = (
+            work_link.get_text(
+                " ",
+                strip=True,
+            )
         )
 
         works.append({
-            "ao3_work_id": ao3_work_id,
-            "title": title,
-            "url": (
-                "https://archiveofourown.org"
-                f"/works/{ao3_work_id}"
-            ),
+            "ao3_work_id":
+                ao3_work_id,
+            "title":
+                title,
+            "url":
+                (
+                    "https://"
+                    "archiveofourown.org"
+                    f"/works/"
+                    f"{ao3_work_id}"
+                ),
         })
 
     next_link = soup.select_one(
@@ -553,18 +776,24 @@ def parse_user_works_page(html):
     )
 
     if next_link is None:
-        next_link = soup.select_one(
-            'a[rel="next"]'
+        next_link = (
+            soup.select_one(
+                'a[rel="next"]'
+            )
         )
 
     if next_link is not None:
-        next_page = next_link.get(
-            "href"
+        next_page = (
+            next_link.get(
+                "href"
+            )
         )
+
     else:
         next_page = None
 
     return works, next_page
+
 
 def fetch_user_works(username):
     search_url = (
@@ -573,7 +802,8 @@ def fetch_user_works(username):
     )
 
     search_params = {
-        "work_search[creators]": username,
+        "work_search[creators]":
+            username,
         "work_search[sort_column]":
             "revised_at",
         "work_search[sort_direction]":
@@ -586,161 +816,63 @@ def fetch_user_works(username):
     seen_work_ids = set()
     seen_pages = set()
 
-    discovery_connect_timeout = 15
-    discovery_read_timeout = 60
-    discovery_max_attempts = 3
-
     page_number = 1
     first_page = True
 
     while next_url:
-        response = None
+        print(
+            f"  Fetching search page "
+            f"{page_number}..."
+        )
 
-        for attempt in range(
-            1,
-            discovery_max_attempts + 1,
-        ):
-            print(
-                f"  Fetching search page "
-                f"{page_number} "
-                f"(attempt {attempt}/"
-                f"{discovery_max_attempts})..."
-            )
+        params = (
+            search_params
+            if first_page
+            else None
+        )
 
-            time.sleep(
-                REQUEST_DELAY_SECONDS
-            )
-
-            try:
-                if first_page:
-                    response = requests.get(
-                        next_url,
-                        params=search_params,
-                        headers=HEADERS,
-                        timeout=(
-                            discovery_connect_timeout,
-                            discovery_read_timeout,
-                        ),
-                    )
-
-                else:
-                    response = requests.get(
-                        next_url,
-                        headers=HEADERS,
-                        timeout=(
-                            discovery_connect_timeout,
-                            discovery_read_timeout,
-                        ),
-                    )
-
-                if (
-                    500
-                    <= response.status_code
-                    <= 599
-                ):
-                    print(
-                        "  AO3 returned server "
-                        f"error "
-                        f"{response.status_code}."
-                    )
-
-                    if (
-                        attempt
-                        < discovery_max_attempts
-                    ):
-                        print(
-                            "  Treating it as "
-                            "temporary and retrying..."
-                        )
-
-                        time.sleep(
-                            RETRY_DELAY_SECONDS
-                        )
-
-                        continue
-
-                    raise RuntimeError(
-                        "AO3 returned server "
-                        f"error "
-                        f"{response.status_code} "
-                        "on every attempt."
-                    )
-
-                if response.status_code == 429:
-                    print(
-                        "  AO3 asked us to "
-                        "slow down."
-                    )
-
-                    if (
-                        attempt
-                        < discovery_max_attempts
-                    ):
-                        time.sleep(
-                            RETRY_DELAY_SECONDS
-                            * 2
-                        )
-
-                        continue
-
-                    raise RuntimeError(
-                        "AO3 rate-limited the "
-                        "discovery request."
-                    )
-
-                response.raise_for_status()
-
-                break
-
-            except requests.Timeout:
-                if (
-                    attempt
-                    < discovery_max_attempts
-                ):
-                    print(
-                        "  AO3 timed out; "
-                        "retrying..."
-                    )
-
-                    time.sleep(
-                        RETRY_DELAY_SECONDS
-                    )
-
-                    continue
-
-                raise RuntimeError(
-                    "AO3 timed out while "
-                    "searching for the user's "
-                    "works."
-                )
-
-            except requests.RequestException as error:
-                raise RuntimeError(
-                    "Could not search AO3 "
-                    f"works: {error}"
-                )
+        response = fetch_ao3_page(
+            next_url,
+            params=params,
+            connect_timeout=15,
+            read_timeout=60,
+            max_attempts=2,
+        )
 
         first_page = False
 
-        actual_url = response.url
-
-        if actual_url in seen_pages:
-            raise RuntimeError(
-                "AO3 pagination loop detected."
+        try:
+            actual_url = (
+                response.url
             )
 
-        seen_pages.add(actual_url)
+            if (
+                actual_url
+                in seen_pages
+            ):
+                raise RuntimeError(
+                    "AO3 pagination "
+                    "loop detected."
+                )
 
-        print(
-            f"  Search page {page_number} "
-            f"received."
-        )
+            seen_pages.add(
+                actual_url
+            )
 
-        page_works, next_page = (
-            parse_user_works_page(
+            print(
+                f"  Search page "
+                f"{page_number} received."
+            )
+
+            (
+                page_works,
+                next_page,
+            ) = parse_user_works_page(
                 response.text
             )
-        )
+
+        finally:
+            response.close()
 
         print(
             f"  Works found on page "
@@ -749,22 +881,29 @@ def fetch_user_works(username):
         )
 
         for work in page_works:
-            ao3_work_id = work[
-                "ao3_work_id"
-            ]
+            ao3_work_id = (
+                work[
+                    "ao3_work_id"
+                ]
+            )
 
-            if ao3_work_id in seen_work_ids:
+            if (
+                ao3_work_id
+                in seen_work_ids
+            ):
                 continue
 
             seen_work_ids.add(
                 ao3_work_id
             )
 
-            all_works.append(work)
+            all_works.append(
+                work
+            )
 
         if next_page:
             next_url = urljoin(
-                response.url,
+                actual_url,
                 next_page,
             )
 
