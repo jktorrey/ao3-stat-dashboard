@@ -1077,12 +1077,59 @@ def render_history(work_id):
 
 
 def render_system_health():
+    from app_logging import (
+        get_file_logger,
+    )
+
+    from collection_lock import (
+        CollectionAlreadyRunning,
+    )
+
+    from scheduled_collection import (
+        run_collection_cycle,
+    )
+
     health = get_system_health()
 
     with st.expander(
         "System health",
         expanded=True,
     ):
+        collection_notice = (
+            st.session_state.pop(
+                "collection_notice",
+                None,
+            )
+        )
+
+        if collection_notice:
+            notice_type = (
+                collection_notice[
+                    "type"
+                ]
+            )
+
+            notice_message = (
+                collection_notice[
+                    "message"
+                ]
+            )
+
+            if notice_type == "success":
+                st.success(
+                    notice_message
+                )
+
+            elif notice_type == "warning":
+                st.warning(
+                    notice_message
+                )
+
+            else:
+                st.error(
+                    notice_message
+                )
+
         column1, column2 = (
             st.columns(2)
         )
@@ -1115,7 +1162,7 @@ def render_system_health():
 
         with column2:
             st.metric(
-                "Last scheduled cycle",
+                "Last collection cycle",
                 (
                     display_timestamp(
                         health[
@@ -1178,6 +1225,142 @@ def render_system_health():
                         "latest_backup_name"
                     ]
                 )
+
+        st.divider()
+
+        st.caption(
+            "Run the normal AO3 collection "
+            "cycle immediately. This also "
+            "checks for new works and resets "
+            "the automatic collection interval."
+        )
+
+        if st.button(
+            "Run collection now",
+            type="primary",
+        ):
+            logger = get_file_logger()
+
+            logger.info(
+                "Manual dashboard collection "
+                "requested."
+            )
+
+            try:
+                with st.spinner(
+                    "Collecting AO3 stats..."
+                ):
+                    result = (
+                        run_collection_cycle(
+                            trigger="manual"
+                        )
+                    )
+
+                collection_result = (
+                    result.get(
+                        "collection"
+                    )
+                    or {}
+                )
+
+                discovery_result = (
+                    result.get(
+                        "discovery"
+                    )
+                    or {}
+                )
+
+                saved = (
+                    collection_result.get(
+                        "saved",
+                        0,
+                    )
+                )
+
+                failed = (
+                    collection_result.get(
+                        "failed",
+                        0,
+                    )
+                )
+
+                events_created = (
+                    collection_result.get(
+                        "events_created",
+                        0,
+                    )
+                )
+
+                new_works = (
+                    discovery_result.get(
+                        "new",
+                        0,
+                    )
+                )
+
+                added = (
+                    discovery_result.get(
+                        "added",
+                        0,
+                    )
+                )
+
+                message = (
+                    "Collection complete — "
+                    f"{saved} snapshots saved, "
+                    f"{failed} failed, "
+                    f"{events_created} events "
+                    "created. "
+                    f"{new_works} new works "
+                    f"found, {added} added."
+                )
+
+                logger.info(
+                    "Manual dashboard "
+                    f"{message.lower()}"
+                )
+
+                st.session_state[
+                    "collection_notice"
+                ] = {
+                    "type": "success",
+                    "message": message,
+                }
+
+            except CollectionAlreadyRunning:
+                logger.info(
+                    "Manual dashboard collection "
+                    "was skipped because another "
+                    "collection is already running."
+                )
+
+                st.session_state[
+                    "collection_notice"
+                ] = {
+                    "type": "warning",
+                    "message": (
+                        "A collection is already "
+                        "in progress."
+                    ),
+                }
+
+            except Exception as error:
+                logger.exception(
+                    "Manual dashboard collection "
+                    "failed."
+                )
+
+                st.session_state[
+                    "collection_notice"
+                ] = {
+                    "type": "error",
+                    "message": (
+                        "Manual collection failed: "
+                        f"{error}"
+                    ),
+                }
+
+            st.rerun()
 
         st.divider()
 

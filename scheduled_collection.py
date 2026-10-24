@@ -8,6 +8,11 @@ from app_logging import (
     capture_output,
 )
 
+from collection_lock import (
+    CollectionAlreadyRunning,
+    collection_lock,
+)
+
 from database_backup import (
     backup_database,
 )
@@ -75,59 +80,92 @@ def get_next_collection_time():
     )
 
 
-def run_scheduled_cycle():
-    print(
-        "Running scheduled AO3 cycle..."
-    )
-    print()
-
-    print(
-        "Step 1: Collecting tracked works"
-    )
-    print()
-
-    try:
-        collection_result = (
-            collect_all_stats()
-        )
-
-    except Exception as error:
-        collection_result = None
-
+def run_collection_cycle(
+    trigger="scheduled",
+):
+    with collection_lock():
         print(
-            "Scheduled collection encountered "
-            f"an unexpected error: {error}"
+            f"Running {trigger} AO3 cycle..."
         )
         print()
 
-    print(
-        "Step 2: Checking for new works"
-    )
-    print()
-
-    try:
-        discovery_result = (
-            discover_and_add_new_works()
-        )
-
-    except Exception as error:
-        discovery_result = None
-
         print(
-            "Work discovery encountered "
-            f"an unexpected error: {error}"
+            "Step 1: Collecting tracked works"
         )
         print()
 
-    print(
-        "Scheduled AO3 cycle complete."
-    )
-    print()
+        try:
+            collection_result = (
+                collect_all_stats()
+            )
 
-    return {
-        "collection": collection_result,
-        "discovery": discovery_result,
-    }
+        except Exception as error:
+            collection_result = None
+
+            print(
+                "Collection encountered "
+                f"an unexpected error: {error}"
+            )
+            print()
+
+        print(
+            "Step 2: Checking for new works"
+        )
+        print()
+
+        try:
+            discovery_result = (
+                discover_and_add_new_works()
+            )
+
+        except Exception as error:
+            discovery_result = None
+
+            print(
+                "Work discovery encountered "
+                f"an unexpected error: {error}"
+            )
+            print()
+
+        print(
+            f"{trigger.capitalize()} "
+            "AO3 cycle complete."
+        )
+        print()
+
+        print(
+            "Checking daily database backup..."
+        )
+
+        backup_result = None
+
+        try:
+            backup_result = (
+                backup_database()
+            )
+
+        except Exception as error:
+            print(
+                "Database backup failed: "
+                f"{error}"
+            )
+
+        set_last_scheduled_collection()
+
+        print(
+            "Collection timestamp updated."
+        )
+
+        return {
+            "collection":
+                collection_result,
+
+            "discovery":
+                discovery_result,
+
+            "backup":
+                backup_result,
+        }
 
 
 def run():
@@ -180,32 +218,17 @@ def run():
     )
     print()
 
-    run_scheduled_cycle()
-
-    print()
-    print(
-        "Checking daily database backup..."
-    )
-
     try:
-        backup_database()
-
-    except Exception as error:
-        print(
-            "Database backup failed: "
-            f"{error}"
+        run_collection_cycle(
+            trigger="scheduled"
         )
 
-    # The backup is intentionally independent
-    # of the collection timestamp. A backup
-    # failure should not cause Windows to rerun
-    # the entire AO3 cycle every 15 minutes.
-    set_last_scheduled_collection()
-
-    print(
-        "Scheduled collection timestamp "
-        "updated."
-    )
+    except CollectionAlreadyRunning:
+        print(
+            "Scheduled collection skipped "
+            "because another collection is "
+            "already in progress."
+        )
 
 
 def main():

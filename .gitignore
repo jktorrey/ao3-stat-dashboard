@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 *.db
 logs/
+.ao3_collection.lock
