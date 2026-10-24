@@ -283,13 +283,252 @@ def create_detected_completion_event(
     return 1
 
 
+def collect_work_stats(
+    work_id,
+    ao3_work_id,
+    title,
+    url,
+):
+    print(f'Collecting "{title}"...')
+
+    (
+        previous_chapters_published,
+        previous_chapters_total,
+    ) = get_latest_public_chapter_state(
+        work_id
+    )
+
+    try:
+        stats = fetch_work_stats(
+            url
+        )
+
+    except Exception as error:
+        failed_work = {
+            "title": title,
+            "ao3_work_id": ao3_work_id,
+            "error": str(error),
+        }
+
+        print(
+            f"  Collection failed: {error}"
+        )
+        print()
+
+        return {
+            "saved": 0,
+            "failed": 1,
+            "events_created": 0,
+            "successful_work": None,
+            "failed_work": failed_work,
+        }
+
+    detected_at = datetime.now(
+        timezone.utc
+    )
+
+    current_chapters_published = (
+        stats.get(
+            "chapters_published"
+        )
+    )
+
+    current_chapters_total = (
+        stats.get(
+            "chapters_total"
+        )
+    )
+
+    print(
+        f"  Hits: {stats.get('hits')}"
+    )
+    print(
+        f"  Kudos: {stats.get('kudos')}"
+    )
+    print(
+        f"  Comments: "
+        f"{stats.get('comments')}"
+    )
+    print(
+        f"  Public bookmarks: "
+        f"{stats.get('public_bookmarks')}"
+    )
+    print(
+        f"  Words: "
+        f"{stats.get('word_count')}"
+    )
+    print(
+        "  Chapters: "
+        f"{current_chapters_published}"
+        "/"
+        f"{current_chapters_total}"
+    )
+
+    save_snapshot(
+        work_id,
+        stats,
+        source="ao3_public",
+        collected_at=detected_at,
+    )
+
+    successful_work = {
+        "title": title,
+        "ao3_work_id": ao3_work_id,
+        "hits": stats.get(
+            "hits"
+        ),
+        "kudos": stats.get(
+            "kudos"
+        ),
+        "comments": stats.get(
+            "comments"
+        ),
+        "public_bookmarks": stats.get(
+            "public_bookmarks"
+        ),
+    }
+
+    chapter_increase = (
+        previous_chapters_published
+        is not None
+        and current_chapters_published
+        is not None
+        and current_chapters_published
+        > previous_chapters_published
+    )
+
+    previous_complete = is_complete(
+        previous_chapters_published,
+        previous_chapters_total,
+    )
+
+    current_complete = is_complete(
+        current_chapters_published,
+        current_chapters_total,
+    )
+
+    completion_transition = (
+        previous_chapters_published
+        is not None
+        and not previous_complete
+        and current_complete
+    )
+
+    chapter_metadata = []
+
+    if (
+        chapter_increase
+        or (
+            completion_transition
+            and not stats.get(
+                "completed_date"
+            )
+        )
+    ):
+        try:
+            chapter_metadata = (
+                fetch_chapter_metadata(
+                    url
+                )
+            )
+
+        except Exception as error:
+            print(
+                "  Could not retrieve AO3 "
+                "chapter metadata: "
+                f"{error}"
+            )
+
+            print(
+                "  Event dates will fall "
+                "back to collection time "
+                "where necessary."
+            )
+
+    events_created = 0
+
+    try:
+        new_events = (
+            create_detected_chapter_events(
+                work_id=work_id,
+                previous_chapter_count=(
+                    previous_chapters_published
+                ),
+                current_chapter_count=(
+                    current_chapters_published
+                ),
+                detected_at=detected_at,
+                chapter_metadata=(
+                    chapter_metadata
+                ),
+            )
+        )
+
+        events_created += new_events
+
+    except Exception as error:
+        print(
+            "  Snapshot saved, but chapter "
+            f"event detection failed: {error}"
+        )
+
+    try:
+        new_events = (
+            create_detected_completion_event(
+                work_id=work_id,
+                previous_chapters_published=(
+                    previous_chapters_published
+                ),
+                previous_chapters_total=(
+                    previous_chapters_total
+                ),
+                current_chapters_published=(
+                    current_chapters_published
+                ),
+                current_chapters_total=(
+                    current_chapters_total
+                ),
+                completed_date=stats.get(
+                    "completed_date"
+                ),
+                detected_at=detected_at,
+                chapter_metadata=(
+                    chapter_metadata
+                ),
+            )
+        )
+
+        events_created += new_events
+
+    except Exception as error:
+        print(
+            "  Snapshot saved, but work "
+            "completion detection failed: "
+            f"{error}"
+        )
+
+    print()
+
+    return {
+        "saved": 1,
+        "failed": 0,
+        "events_created":
+            events_created,
+        "successful_work":
+            successful_work,
+        "failed_work": None,
+    }
+
+
 def collect_all_stats():
     initialize_database()
 
     works = get_all_works()
 
     if not works:
-        print("No works are being tracked.")
+        print(
+            "No works are being tracked."
+        )
         print()
 
         return {
@@ -303,6 +542,7 @@ def collect_all_stats():
     saved = 0
     failed = 0
     events_created = 0
+
     successful_works = []
     failed_works = []
 
@@ -312,223 +552,51 @@ def collect_all_stats():
         title,
         url,
     ) in works:
-        print(f'Collecting "{title}"...')
-
-        (
-            previous_chapters_published,
-            previous_chapters_total,
-        ) = get_latest_public_chapter_state(
-            work_id
+        result = collect_work_stats(
+            work_id=work_id,
+            ao3_work_id=ao3_work_id,
+            title=title,
+            url=url,
         )
 
-        try:
-            stats = fetch_work_stats(
-                url
+        saved += result.get(
+            "saved",
+            0,
+        )
+
+        failed += result.get(
+            "failed",
+            0,
+        )
+
+        events_created += result.get(
+            "events_created",
+            0,
+        )
+
+        successful_work = (
+            result.get(
+                "successful_work"
+            )
+        )
+
+        if successful_work:
+            successful_works.append(
+                successful_work
             )
 
-        except Exception as error:
-            failed += 1
+        failed_work = result.get(
+            "failed_work"
+        )
 
+        if failed_work:
             failed_works.append(
-                {
-                    "title": title,
-                    "ao3_work_id": ao3_work_id,
-                    "error": str(error),
-                }
+                failed_work
             )
 
-            print(
-                f"  Collection failed: {error}"
-            )
-            print()
-
-            continue
-
-        detected_at = datetime.now(
-            timezone.utc
-        )
-
-        current_chapters_published = (
-            stats.get(
-                "chapters_published"
-            )
-        )
-
-        current_chapters_total = (
-            stats.get(
-                "chapters_total"
-            )
-        )
-
-        print(
-            f"  Hits: {stats.get('hits')}"
-        )
-        print(
-            f"  Kudos: {stats.get('kudos')}"
-        )
-        print(
-            f"  Comments: "
-            f"{stats.get('comments')}"
-        )
-        print(
-            f"  Public bookmarks: "
-            f"{stats.get('public_bookmarks')}"
-        )
-        print(
-            f"  Words: "
-            f"{stats.get('word_count')}"
-        )
-        print(
-            "  Chapters: "
-            f"{current_chapters_published}"
-            "/"
-            f"{current_chapters_total}"
-        )
-
-        save_snapshot(
-            work_id,
-            stats,
-            source="ao3_public",
-            collected_at=detected_at,
-        )
-
-        saved += 1
-
-        successful_works.append(
-            {
-                "title": title,
-                "ao3_work_id": ao3_work_id,
-                "hits": stats.get("hits"),
-                "kudos": stats.get("kudos"),
-                "comments": stats.get(
-                    "comments"
-                ),
-                "public_bookmarks": stats.get(
-                    "public_bookmarks"
-                ),
-            }
-        )
-
-        chapter_increase = (
-            previous_chapters_published
-            is not None
-            and current_chapters_published
-            is not None
-            and current_chapters_published
-            > previous_chapters_published
-        )
-
-        previous_complete = is_complete(
-            previous_chapters_published,
-            previous_chapters_total,
-        )
-
-        current_complete = is_complete(
-            current_chapters_published,
-            current_chapters_total,
-        )
-
-        completion_transition = (
-            previous_chapters_published
-            is not None
-            and not previous_complete
-            and current_complete
-        )
-
-        chapter_metadata = []
-
-        if (
-            chapter_increase
-            or (
-                completion_transition
-                and not stats.get(
-                    "completed_date"
-                )
-            )
-        ):
-            try:
-                chapter_metadata = (
-                    fetch_chapter_metadata(
-                        url
-                    )
-                )
-
-            except Exception as error:
-                print(
-                    "  Could not retrieve AO3 "
-                    "chapter metadata: "
-                    f"{error}"
-                )
-
-                print(
-                    "  Event dates will fall "
-                    "back to collection time "
-                    "where necessary."
-                )
-
-        try:
-            new_events = (
-                create_detected_chapter_events(
-                    work_id=work_id,
-                    previous_chapter_count=(
-                        previous_chapters_published
-                    ),
-                    current_chapter_count=(
-                        current_chapters_published
-                    ),
-                    detected_at=detected_at,
-                    chapter_metadata=(
-                        chapter_metadata
-                    ),
-                )
-            )
-
-            events_created += new_events
-
-        except Exception as error:
-            print(
-                "  Snapshot saved, but chapter "
-                f"event detection failed: {error}"
-            )
-
-        try:
-            new_events = (
-                create_detected_completion_event(
-                    work_id=work_id,
-                    previous_chapters_published=(
-                        previous_chapters_published
-                    ),
-                    previous_chapters_total=(
-                        previous_chapters_total
-                    ),
-                    current_chapters_published=(
-                        current_chapters_published
-                    ),
-                    current_chapters_total=(
-                        current_chapters_total
-                    ),
-                    completed_date=stats.get(
-                        "completed_date"
-                    ),
-                    detected_at=detected_at,
-                    chapter_metadata=(
-                        chapter_metadata
-                    ),
-                )
-            )
-
-            events_created += new_events
-
-        except Exception as error:
-            print(
-                "  Snapshot saved, but work "
-                f"completion detection failed: "
-                f"{error}"
-            )
-
-        print()
-
-    print("Collection complete.")
+    print(
+        "Collection complete."
+    )
     print(
         f"  Snapshots saved: {saved}"
     )
@@ -536,7 +604,7 @@ def collect_all_stats():
         f"  Failed: {failed}"
     )
     print(
-        f"  Events created: "
+        "  Events created: "
         f"{events_created}"
     )
     print()
@@ -544,10 +612,12 @@ def collect_all_stats():
     return {
         "saved": saved,
         "failed": failed,
-        "events_created": events_created,
+        "events_created":
+            events_created,
         "successful_works":
             successful_works,
-        "failed_works": failed_works,
+        "failed_works":
+            failed_works,
     }
 
 

@@ -25,7 +25,10 @@ from collector import (
     reset_ao3_transport_state,
 )
 
-from collection import collect_all_stats
+from collection import (
+    collect_all_stats,
+    collect_work_stats,
+)
 
 from discovery import (
     discover_and_add_new_works,
@@ -101,6 +104,43 @@ def get_next_collection_time():
             hours=interval_hours
         )
     )
+
+
+def run_single_work_collection(
+    work_id,
+    ao3_work_id,
+    title,
+    url,
+):
+    initialize_database()
+
+    with collection_lock():
+        reset_ao3_transport_state()
+
+        print(
+            "Running manual single-work "
+            "collection..."
+        )
+        print()
+
+        try:
+            result = collect_work_stats(
+                work_id=work_id,
+                ao3_work_id=ao3_work_id,
+                title=title,
+                url=url,
+            )
+
+            print(
+                "Single-work collection "
+                "complete."
+            )
+            print()
+
+            return result
+
+        finally:
+            close_browser_session()
 
 
 def run_collection_cycle(

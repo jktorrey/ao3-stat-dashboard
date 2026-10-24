@@ -663,11 +663,29 @@ def render_work_detail(
     changes,
     window_label,
 ):
+    from app_logging import (
+        get_file_logger,
+    )
+
+    from collection_lock import (
+        CollectionAlreadyRunning,
+    )
+
+    from scheduled_collection import (
+        run_single_work_collection,
+    )
+
     st.divider()
 
-    st.header("Work Detail")
+    st.header(
+        "Work Detail"
+    )
 
-    work_ids = overview["work_id"].tolist()
+    work_ids = (
+        overview[
+            "work_id"
+        ].tolist()
+    )
 
     title_by_id = dict(
         zip(
@@ -676,18 +694,40 @@ def render_work_detail(
         )
     )
 
-    selected_work_id = st.selectbox(
-        "Work",
-        options=work_ids,
-        format_func=lambda work_id: (
-            title_by_id[work_id]
-        ),
+    selected_work_id = (
+        st.selectbox(
+            "Work",
+            options=work_ids,
+            format_func=lambda work_id: (
+                title_by_id[
+                    work_id
+                ]
+            ),
+        )
     )
 
     selected_row = overview[
         overview["work_id"]
         == selected_work_id
     ].iloc[0]
+
+    selected_title = (
+        selected_row[
+            "title"
+        ]
+    )
+
+    selected_ao3_work_id = int(
+        selected_row[
+            "ao3_work_id"
+        ]
+    )
+
+    selected_url = (
+        "https://archiveofourown.org"
+        f"/works/"
+        f"{selected_ao3_work_id}"
+    )
 
     selected_changes = changes[
         changes["work_id"]
@@ -696,12 +736,229 @@ def render_work_detail(
 
     if selected_changes.empty:
         change_row = None
+
     else:
-        change_row = selected_changes.iloc[0]
+        change_row = (
+            selected_changes.iloc[0]
+        )
 
     st.subheader(
-        selected_row["title"]
+        selected_title
     )
+
+    work_collection_notice = (
+        st.session_state.pop(
+            "work_collection_notice",
+            None,
+        )
+    )
+
+    if (
+        work_collection_notice
+        and work_collection_notice.get(
+            "work_id"
+        )
+        == selected_work_id
+    ):
+        notice_type = (
+            work_collection_notice.get(
+                "type"
+            )
+        )
+
+        notice_message = (
+            work_collection_notice.get(
+                "message",
+                "",
+            )
+        )
+
+        if notice_type == "success":
+            st.success(
+                notice_message
+            )
+
+        elif notice_type == "warning":
+            st.warning(
+                notice_message
+            )
+
+        else:
+            st.error(
+                notice_message
+            )
+
+    st.caption(
+        "Refresh only this work from AO3. "
+        "This does not reset the automatic "
+        "collection interval, run discovery, "
+        "or trigger a database backup."
+    )
+
+    if st.button(
+        "Collect this work now",
+        key=(
+            "collect_work_"
+            f"{selected_work_id}"
+        ),
+    ):
+        logger = (
+            get_file_logger()
+        )
+
+        logger.info(
+            "Manual single-work "
+            "collection requested for "
+            f'"{selected_title}".'
+        )
+
+        try:
+            progress_output = (
+                st.empty()
+            )
+
+            with st.spinner(
+                f'Collecting '
+                f'"{selected_title}"...'
+            ):
+                with (
+                    capture_dashboard_progress(
+                        progress_output,
+                        logger,
+                    )
+                ):
+                    result = (
+                        run_single_work_collection(
+                            work_id=(
+                                selected_work_id
+                            ),
+                            ao3_work_id=(
+                                selected_ao3_work_id
+                            ),
+                            title=(
+                                selected_title
+                            ),
+                            url=(
+                                selected_url
+                            ),
+                        )
+                    )
+
+            if (
+                result.get(
+                    "saved",
+                    0,
+                )
+                == 1
+            ):
+                events_created = (
+                    result.get(
+                        "events_created",
+                        0,
+                    )
+                )
+
+                message = (
+                    f'"{selected_title}" '
+                    "collected successfully — "
+                    "1 snapshot saved, "
+                    f"{events_created} events "
+                    "created."
+                )
+
+                logger.info(
+                    message
+                )
+
+                notice_type = (
+                    "success"
+                )
+
+            else:
+                failed_work = (
+                    result.get(
+                        "failed_work"
+                    )
+                    or {}
+                )
+
+                error_message = (
+                    failed_work.get(
+                        "error",
+                        "Unknown collection "
+                        "error.",
+                    )
+                )
+
+                message = (
+                    f'"{selected_title}" '
+                    "collection failed: "
+                    f"{error_message}"
+                )
+
+                logger.error(
+                    message
+                )
+
+                notice_type = (
+                    "error"
+                )
+
+            st.session_state[
+                "work_collection_notice"
+            ] = {
+                "work_id":
+                    selected_work_id,
+                "type":
+                    notice_type,
+                "message":
+                    message,
+            }
+
+        except CollectionAlreadyRunning:
+            message = (
+                "A collection is already "
+                "in progress."
+            )
+
+            logger.info(
+                "Manual single-work "
+                "collection was skipped "
+                "because another collection "
+                "is already running."
+            )
+
+            st.session_state[
+                "work_collection_notice"
+            ] = {
+                "work_id":
+                    selected_work_id,
+                "type":
+                    "warning",
+                "message":
+                    message,
+            }
+
+        except Exception as error:
+            logger.exception(
+                "Manual single-work "
+                "collection failed."
+            )
+
+            st.session_state[
+                "work_collection_notice"
+            ] = {
+                "work_id":
+                    selected_work_id,
+                "type":
+                    "error",
+                "message": (
+                    "Manual collection failed: "
+                    f"{error}"
+                ),
+            }
+
+        st.rerun()
 
     public1, public2, public3, public4 = (
         st.columns(4)
@@ -711,13 +968,17 @@ def render_work_detail(
         st.metric(
             "Hits",
             display_number(
-                selected_row["hits"]
+                selected_row[
+                    "hits"
+                ]
             ),
             delta=(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row["hits_change"]
+                    change_row[
+                        "hits_change"
+                    ]
                 )
             ),
         )
@@ -726,13 +987,17 @@ def render_work_detail(
         st.metric(
             "Kudos",
             display_number(
-                selected_row["kudos"]
+                selected_row[
+                    "kudos"
+                ]
             ),
             delta=(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row["kudos_change"]
+                    change_row[
+                        "kudos_change"
+                    ]
                 )
             ),
         )
@@ -741,13 +1006,17 @@ def render_work_detail(
         st.metric(
             "Comments",
             display_number(
-                selected_row["comments"]
+                selected_row[
+                    "comments"
+                ]
             ),
             delta=(
                 None
                 if change_row is None
                 else metric_delta(
-                    change_row["comments_change"]
+                    change_row[
+                        "comments_change"
+                    ]
                 )
             ),
         )
@@ -772,31 +1041,39 @@ def render_work_detail(
         )
 
     st.caption(
-        f"Changes shown for the selected "
+        "Changes shown for the selected "
         f"{window_label.lower()} window."
     )
 
-    public5, public6 = st.columns(2)
+    public5, public6 = (
+        st.columns(2)
+    )
 
     with public5:
         st.metric(
             "Words",
             display_number(
-                selected_row["word_count"]
+                selected_row[
+                    "word_count"
+                ]
             ),
         )
 
     with public6:
-        chapters_published = display_number(
-            selected_row[
-                "chapters_published"
-            ]
+        chapters_published = (
+            display_number(
+                selected_row[
+                    "chapters_published"
+                ]
+            )
         )
 
-        chapters_total = display_number(
-            selected_row[
-                "chapters_total"
-            ]
+        chapters_total = (
+            display_number(
+                selected_row[
+                    "chapters_total"
+                ]
+            )
         )
 
         st.metric(
@@ -834,7 +1111,7 @@ def render_work_detail(
     render_history(
         selected_work_id
     )
-
+    
 
 def render_private_stats(work_id):
     st.subheader(
