@@ -15,7 +15,7 @@ from websockets.sync.client import connect
 BROWSER_START_TIMEOUT_SECONDS = 20
 PAGE_LOAD_TIMEOUT_SECONDS = 30
 DEVTOOLS_COMMAND_TIMEOUT_SECONDS = 30
-
+CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS = 20
 BROWSER_FETCH_ATTEMPTS = 2
 
 
@@ -343,6 +343,35 @@ class HeadedChromiumSession:
             "value"
         )
 
+    def _get_page_metadata(
+        self,
+    ):
+        metadata_json = self._evaluate(
+            """
+            JSON.stringify({
+                href: window.location.href,
+                title: document.title
+            })
+            """
+        )
+
+        if not metadata_json:
+            raise BrowserFetchError(
+                "Chromium did not return "
+                "page metadata."
+            )
+
+        try:
+            return json.loads(
+                metadata_json
+            )
+
+        except json.JSONDecodeError as error:
+            raise BrowserFetchError(
+                "Chromium returned invalid "
+                "page metadata."
+            ) from error
+
     def fetch(
         self,
         url,
@@ -365,7 +394,7 @@ class HeadedChromiumSession:
                 f"{error_text}"
             )
 
-        deadline = (
+        page_deadline = (
             time.monotonic()
             + PAGE_LOAD_TIMEOUT_SECONDS
         )
@@ -374,7 +403,10 @@ class HeadedChromiumSession:
             1
         )
 
-        while time.monotonic() < deadline:
+        while (
+            time.monotonic()
+            < page_deadline
+        ):
             state = self._evaluate(
                 "document.readyState"
             )
@@ -393,38 +425,111 @@ class HeadedChromiumSession:
                 "Chromium."
             )
 
-        # Give AO3 and Chromium a short
-        # settling period after readyState
-        # reaches complete.
+        challenge_deadline = (
+            time.monotonic()
+            + CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS
+        )
+
+        challenge_detected = False
+
+        while True:
+            try:
+                metadata = (
+                    self._get_page_metadata()
+                )
+
+            except BrowserFetchError:
+                if (
+                    challenge_detected
+                    and time.monotonic()
+                    < challenge_deadline
+                ):
+                    time.sleep(
+                        1
+                    )
+                    continue
+
+                raise
+
+            title = (
+                metadata.get(
+                    "title",
+                    "",
+                )
+                .strip()
+            )
+
+            normalized_title = (
+                title.lower()
+            )
+
+            is_cloudflare_challenge = (
+                "just a moment"
+                in normalized_title
+            )
+
+            if not is_cloudflare_challenge:
+                break
+
+            if not challenge_detected:
+                challenge_detected = True
+
+                print(
+                    "  Cloudflare browser "
+                    "challenge detected; "
+                    "waiting for it to clear..."
+                )
+
+            if (
+                time.monotonic()
+                >= challenge_deadline
+            ):
+                raise BrowserFetchError(
+                    "Cloudflare browser "
+                    "challenge did not clear "
+                    "within "
+                    f"{CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS} "
+                    "seconds."
+                )
+
+            time.sleep(
+                1
+            )
+
+        final_page_deadline = (
+            time.monotonic()
+            + PAGE_LOAD_TIMEOUT_SECONDS
+        )
+
+        while (
+            time.monotonic()
+            < final_page_deadline
+        ):
+            state = self._evaluate(
+                "document.readyState"
+            )
+
+            if state == "complete":
+                break
+
+            time.sleep(
+                0.25
+            )
+
+        else:
+            raise BrowserFetchError(
+                "Timed out waiting for AO3 "
+                "to finish loading after the "
+                "Cloudflare challenge."
+            )
+
         time.sleep(
             0.5
         )
 
-        metadata_json = self._evaluate(
-            """
-            JSON.stringify({
-                href: window.location.href,
-                title: document.title
-            })
-            """
+        metadata = (
+            self._get_page_metadata()
         )
-
-        if not metadata_json:
-            raise BrowserFetchError(
-                "Chromium did not return "
-                "page metadata."
-            )
-
-        try:
-            metadata = json.loads(
-                metadata_json
-            )
-
-        except json.JSONDecodeError as error:
-            raise BrowserFetchError(
-                "Chromium returned invalid "
-                "page metadata."
-            ) from error
 
         html = self._evaluate(
             (
@@ -448,6 +553,20 @@ class HeadedChromiumSession:
             "href",
             url,
         )
+
+        normalized_title = (
+            title.lower()
+        )
+
+        if (
+            "just a moment"
+            in normalized_title
+        ):
+            raise BrowserFetchError(
+                "Chromium remained on the "
+                "Cloudflare browser challenge "
+                "page."
+            )
 
         if (
             "525" in title
@@ -524,7 +643,7 @@ class HeadedChromiumSession:
             self.profile_dir,
             ignore_errors=True,
         )
-
+        
 
 _browser_session = None
 
