@@ -178,6 +178,55 @@ def get_work_history(work_id):
     return dataframe
 
 
+def get_snapshot_management_data(
+    work_id,
+):
+    connection = sqlite3.connect(
+        DATABASE_NAME
+    )
+
+    query = """
+        SELECT
+            id AS snapshot_id,
+            collected_at,
+            hits,
+            kudos,
+            comments,
+            public_bookmarks,
+            word_count,
+            chapters_published,
+            chapters_total,
+            subscriptions,
+            total_bookmarks,
+            comment_threads,
+            source
+        FROM snapshots
+        WHERE work_id = ?
+        ORDER BY collected_at DESC, id DESC
+    """
+
+    dataframe = pd.read_sql_query(
+        query,
+        connection,
+        params=(work_id,),
+    )
+
+    connection.close()
+
+    if not dataframe.empty:
+        dataframe[
+            "collected_at"
+        ] = pd.to_datetime(
+            dataframe[
+                "collected_at"
+            ],
+            format="mixed",
+            utc=True,
+        )
+
+    return dataframe
+
+
 def get_latest_private_stats(work_id):
     connection = sqlite3.connect(DATABASE_NAME)
 

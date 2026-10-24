@@ -11,6 +11,7 @@ from dashboard_data import (
     get_latest_private_stats,
     get_overview_data,
     get_snapshot_count,
+    get_snapshot_management_data,
     get_work_count,
     get_work_history,
     get_work_events,
@@ -1111,7 +1112,12 @@ def render_work_detail(
     render_history(
         selected_work_id
     )
-    
+
+    render_snapshot_management(
+        selected_work_id,
+        selected_title,
+    )
+
 
 def render_private_stats(work_id):
     st.subheader(
@@ -1486,6 +1492,439 @@ def render_history(work_id):
                 hide_index=True,
                 use_container_width=True,
             )
+
+
+def render_snapshot_management(
+    work_id,
+    work_title,
+):
+    from app_logging import (
+        get_file_logger,
+    )
+
+    from database import (
+        delete_snapshots,
+    )
+
+    snapshots = (
+        get_snapshot_management_data(
+            work_id
+        )
+    )
+
+    st.divider()
+
+    notice = st.session_state.get(
+        "snapshot_delete_notice"
+    )
+
+    if (
+        notice
+        and notice.get(
+            "work_id"
+        )
+        == work_id
+    ):
+        st.success(
+            notice.get(
+                "message",
+                "Snapshot deletion complete.",
+            )
+        )
+
+        del st.session_state[
+            "snapshot_delete_notice"
+        ]
+
+    if snapshots.empty:
+        st.info(
+            "No snapshots are available "
+            "for this work."
+        )
+        return
+
+    snapshot_table = (
+        snapshots.copy()
+    )
+
+    snapshot_table[
+        "snapshot_id"
+    ] = (
+        snapshot_table[
+            "snapshot_id"
+        ]
+        .astype(int)
+    )
+
+    snapshot_table = (
+        snapshot_table.set_index(
+            "snapshot_id"
+        )
+    )
+
+    latest_snapshot_id = int(
+        snapshot_table.index[0]
+    )
+
+    display_table = pd.DataFrame(
+        index=snapshot_table.index
+    )
+
+    display_table[
+        "Delete"
+    ] = False
+
+    display_table[
+        "Latest"
+    ] = ""
+
+    display_table.loc[
+        latest_snapshot_id,
+        "Latest",
+    ] = "✓"
+
+    display_table[
+        "Collected"
+    ] = (
+        snapshot_table[
+            "collected_at"
+        ]
+        .apply(
+            display_timestamp
+        )
+    )
+
+    display_table[
+        "Source"
+    ] = (
+        snapshot_table[
+            "source"
+        ]
+        .apply(
+            display_source
+        )
+    )
+
+    display_table[
+        "Hits"
+    ] = (
+        snapshot_table[
+            "hits"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Kudos"
+    ] = (
+        snapshot_table[
+            "kudos"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Comments"
+    ] = (
+        snapshot_table[
+            "comments"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Public bookmarks"
+    ] = (
+        snapshot_table[
+            "public_bookmarks"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Words"
+    ] = (
+        snapshot_table[
+            "word_count"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    def format_chapters(
+        row,
+    ):
+        published = row[
+            "chapters_published"
+        ]
+
+        total = row[
+            "chapters_total"
+        ]
+
+        if pd.isna(
+            published
+        ):
+            return "—"
+
+        published = int(
+            published
+        )
+
+        if pd.isna(
+            total
+        ):
+            return (
+                f"{published}/?"
+            )
+
+        return (
+            f"{published}/"
+            f"{int(total)}"
+        )
+
+    display_table[
+        "Chapters"
+    ] = (
+        snapshot_table.apply(
+            format_chapters,
+            axis=1,
+        )
+    )
+
+    display_table[
+        "Subscriptions"
+    ] = (
+        snapshot_table[
+            "subscriptions"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Total bookmarks"
+    ] = (
+        snapshot_table[
+            "total_bookmarks"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    display_table[
+        "Comment threads"
+    ] = (
+        snapshot_table[
+            "comment_threads"
+        ]
+        .apply(
+            display_number
+        )
+    )
+
+    pending_key = (
+        "snapshot_delete_pending_"
+        f"{work_id}"
+    )
+
+    editor_key = (
+        "snapshot_editor_"
+        f"{work_id}_"
+        f"{len(snapshot_table)}"
+    )
+
+    with st.expander(
+        (
+            "Manage snapshots "
+            f"({len(snapshot_table)})"
+        ),
+        expanded=False,
+    ):
+        st.caption(
+            "Select one or more snapshots "
+            "to delete. Deletion is permanent "
+            "and requires confirmation."
+        )
+
+        edited_table = (
+            st.data_editor(
+                display_table,
+                hide_index=True,
+                use_container_width=True,
+                key=editor_key,
+                disabled=[
+                    "Latest",
+                    "Collected",
+                    "Source",
+                    "Hits",
+                    "Kudos",
+                    "Comments",
+                    "Public bookmarks",
+                    "Words",
+                    "Chapters",
+                    "Subscriptions",
+                    "Total bookmarks",
+                    "Comment threads",
+                ],
+                column_config={
+                    "Delete":
+                        st.column_config.CheckboxColumn(
+                            "Delete",
+                            help=(
+                                "Select this snapshot "
+                                "for deletion."
+                            ),
+                            default=False,
+                        ),
+                },
+            )
+        )
+
+        selected_ids = [
+            int(snapshot_id)
+            for snapshot_id
+            in edited_table.index[
+                edited_table[
+                    "Delete"
+                ]
+                == True
+            ]
+        ]
+
+        selected_count = len(
+            selected_ids
+        )
+
+        if st.button(
+            (
+                "Delete selected "
+                f"snapshot"
+                f"{'s' if selected_count != 1 else ''}"
+            ),
+            key=(
+                "delete_snapshots_"
+                f"{work_id}"
+            ),
+            disabled=(
+                selected_count == 0
+            ),
+        ):
+            st.session_state[
+                pending_key
+            ] = selected_ids
+
+            st.rerun()
+
+    pending_ids = (
+        st.session_state.get(
+            pending_key,
+            [],
+        )
+    )
+
+    if not pending_ids:
+        return
+
+    pending_count = len(
+        pending_ids
+    )
+
+    st.warning(
+        (
+            f"Delete {pending_count} "
+            f"snapshot"
+            f"{'s' if pending_count != 1 else ''} "
+            f'from "{work_title}"? '
+            "This cannot be undone."
+        )
+    )
+
+    if (
+        latest_snapshot_id
+        in pending_ids
+    ):
+        st.warning(
+            "The selection includes the "
+            "latest snapshot for this work. "
+            "After deletion, the previous "
+            "snapshot will become current."
+        )
+
+    confirm_column, cancel_column = (
+        st.columns(2)
+    )
+
+    with confirm_column:
+        if st.button(
+            "Confirm deletion",
+            type="primary",
+            key=(
+                "confirm_snapshot_delete_"
+                f"{work_id}"
+            ),
+        ):
+            deleted = (
+                delete_snapshots(
+                    pending_ids
+                )
+            )
+
+            logger = (
+                get_file_logger()
+            )
+
+            logger.info(
+                "Deleted "
+                f"{deleted} snapshot"
+                f"{'s' if deleted != 1 else ''} "
+                f'from "{work_title}" '
+                "through the dashboard."
+            )
+
+            st.session_state[
+                "snapshot_delete_notice"
+            ] = {
+                "work_id":
+                    work_id,
+                "message": (
+                    f"Deleted {deleted} "
+                    f"snapshot"
+                    f"{'s' if deleted != 1 else ''} "
+                    f'from "{work_title}".'
+                ),
+            }
+
+            del st.session_state[
+                pending_key
+            ]
+
+            st.rerun()
+
+    with cancel_column:
+        if st.button(
+            "Cancel",
+            key=(
+                "cancel_snapshot_delete_"
+                f"{work_id}"
+            ),
+        ):
+            del st.session_state[
+                pending_key
+            ]
+
+            st.rerun()
 
 
 def render_system_health():
