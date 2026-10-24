@@ -1545,6 +1545,9 @@ def render_snapshot_management(
 
     snapshot_table = (
         snapshots.copy()
+        .reset_index(
+            drop=True
+        )
     )
 
     snapshot_table[
@@ -1556,14 +1559,10 @@ def render_snapshot_management(
         .astype(int)
     )
 
-    snapshot_table = (
-        snapshot_table.set_index(
-            "snapshot_id"
-        )
-    )
-
     latest_snapshot_id = int(
-        snapshot_table.index[0]
+        snapshot_table.iloc[0][
+            "snapshot_id"
+        ]
     )
 
     display_table = pd.DataFrame(
@@ -1571,15 +1570,11 @@ def render_snapshot_management(
     )
 
     display_table[
-        "Delete"
-    ] = False
-
-    display_table[
         "Latest"
     ] = ""
 
     display_table.loc[
-        latest_snapshot_id,
+        0,
         "Latest",
     ] = "✓"
 
@@ -1739,10 +1734,28 @@ def render_snapshot_management(
         f"{work_id}"
     )
 
-    editor_key = (
-        "snapshot_editor_"
+    generation_key = (
+        "snapshot_selection_generation_"
+        f"{work_id}"
+    )
+
+    if generation_key not in (
+        st.session_state
+    ):
+        st.session_state[
+            generation_key
+        ] = 0
+
+    selection_generation = (
+        st.session_state[
+            generation_key
+        ]
+    )
+
+    selector_key = (
+        "snapshot_selector_"
         f"{work_id}_"
-        f"{len(snapshot_table)}"
+        f"{selection_generation}"
     )
 
     with st.expander(
@@ -1753,59 +1766,55 @@ def render_snapshot_management(
         expanded=False,
     ):
         st.caption(
-            "Select one or more snapshots "
-            "to delete. Deletion is permanent "
+            "Select one or more rows to "
+            "delete. Deletion is permanent "
             "and requires confirmation."
         )
 
-        edited_table = (
-            st.data_editor(
+        selection_event = (
+            st.dataframe(
                 display_table,
                 hide_index=True,
                 use_container_width=True,
-                key=editor_key,
-                disabled=[
-                    "Latest",
-                    "Collected",
-                    "Source",
-                    "Hits",
-                    "Kudos",
-                    "Comments",
-                    "Public bookmarks",
-                    "Words",
-                    "Chapters",
-                    "Subscriptions",
-                    "Total bookmarks",
-                    "Comment threads",
-                ],
-                column_config={
-                    "Delete":
-                        st.column_config.CheckboxColumn(
-                            "Delete",
-                            help=(
-                                "Select this snapshot "
-                                "for deletion."
-                            ),
-                            default=False,
-                        ),
-                },
+                key=selector_key,
+                on_select="rerun",
+                selection_mode=(
+                    "multi-row"
+                ),
             )
         )
 
-        selected_ids = [
-            int(snapshot_id)
-            for snapshot_id
-            in edited_table.index[
-                edited_table[
-                    "Delete"
+        selected_positions = list(
+            selection_event
+            .selection
+            .rows
+        )
+
+        if selected_positions:
+            selected_ids = (
+                snapshot_table
+                .iloc[
+                    selected_positions
+                ][
+                    "snapshot_id"
                 ]
-                == True
-            ]
-        ]
+                .astype(int)
+                .tolist()
+            )
+
+        else:
+            selected_ids = []
 
         selected_count = len(
             selected_ids
         )
+
+        if selected_count:
+            st.caption(
+                f"{selected_count} snapshot"
+                f"{'s' if selected_count != 1 else ''} "
+                "selected."
+            )
 
         if st.button(
             (
@@ -1823,11 +1832,20 @@ def render_snapshot_management(
         ):
             st.session_state[
                 pending_key
-            ] = selected_ids
+            ] = list(
+                selected_ids
+            )
+
+            # Force the selection table to
+            # get a brand-new widget identity
+            # on the confirmation rerun.
+            st.session_state[
+                generation_key
+            ] += 1
 
             st.rerun()
 
-    pending_ids = (
+    pending_ids = list(
         st.session_state.get(
             pending_key,
             [],
@@ -1836,6 +1854,62 @@ def render_snapshot_management(
 
     if not pending_ids:
         return
+
+    current_ids = set(
+        snapshot_table[
+            "snapshot_id"
+        ]
+        .astype(int)
+        .tolist()
+    )
+
+    invalid_ids = [
+        snapshot_id
+        for snapshot_id
+        in pending_ids
+        if snapshot_id
+        not in current_ids
+    ]
+
+    if invalid_ids:
+        st.error(
+            "The pending snapshot selection "
+            "no longer matches the current "
+            "work data. Nothing was deleted."
+        )
+
+        del st.session_state[
+            pending_key
+        ]
+
+        return
+
+    pending_mask = (
+        snapshot_table[
+            "snapshot_id"
+        ]
+        .isin(
+            pending_ids
+        )
+    )
+
+    pending_rows = (
+        display_table.loc[
+            pending_mask,
+            [
+                "Latest",
+                "Collected",
+                "Source",
+                "Hits",
+                "Kudos",
+                "Comments",
+                "Public bookmarks",
+                "Words",
+                "Chapters",
+            ],
+        ]
+        .copy()
+    )
 
     pending_count = len(
         pending_ids
@@ -1849,6 +1923,17 @@ def render_snapshot_management(
             f'from "{work_title}"? '
             "This cannot be undone."
         )
+    )
+
+    st.caption(
+        "The following snapshots will "
+        "be deleted:"
+    )
+
+    st.dataframe(
+        pending_rows,
+        hide_index=True,
+        use_container_width=True,
     )
 
     if (
@@ -1875,6 +1960,42 @@ def render_snapshot_management(
                 f"{work_id}"
             ),
         ):
+            # Revalidate immediately before
+            # performing the destructive call.
+            current_snapshot_ids = set(
+                get_snapshot_management_data(
+                    work_id
+                )[
+                    "snapshot_id"
+                ]
+                .astype(int)
+                .tolist()
+            )
+
+            still_valid = all(
+                snapshot_id
+                in current_snapshot_ids
+                for snapshot_id
+                in pending_ids
+            )
+
+            if not still_valid:
+                st.error(
+                    "Snapshot data changed "
+                    "before deletion. Nothing "
+                    "was deleted."
+                )
+
+                del st.session_state[
+                    pending_key
+                ]
+
+                st.session_state[
+                    generation_key
+                ] += 1
+
+                st.rerun()
+
             deleted = (
                 delete_snapshots(
                     pending_ids
@@ -1910,6 +2031,10 @@ def render_snapshot_management(
                 pending_key
             ]
 
+            st.session_state[
+                generation_key
+            ] += 1
+
             st.rerun()
 
     with cancel_column:
@@ -1924,8 +2049,15 @@ def render_snapshot_management(
                 pending_key
             ]
 
-            st.rerun()
+            # New key on rerun guarantees
+            # that Cancel really means an
+            # empty selection.
+            st.session_state[
+                generation_key
+            ] += 1
 
+            st.rerun()
+            
 
 def render_system_health():
     from app_logging import (
