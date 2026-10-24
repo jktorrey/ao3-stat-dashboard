@@ -194,6 +194,12 @@ def fetch_browser_fallback(url):
     global _browser_fallback_active
     global _browser_fallback_unavailable
 
+    # Once this path is selected, direct HTTP
+    # is known to be unhealthy for this cycle.
+    # Keep browser fallback selected even if
+    # Chromium itself later fails.
+    _browser_fallback_active = True
+
     if _browser_fallback_unavailable:
         raise AO3TransportUnavailable(
             "Headed Chromium fallback "
@@ -211,7 +217,6 @@ def fetch_browser_fallback(url):
         )
 
     except Exception as error:
-        _browser_fallback_active = False
         _browser_fallback_unavailable = True
 
         close_browser_session()
@@ -220,8 +225,6 @@ def fetch_browser_fallback(url):
             "Headed Chromium fallback "
             f"failed for {url}: {error}"
         ) from error
-
-    _browser_fallback_active = True
 
     reset_ssl_failure_count()
 

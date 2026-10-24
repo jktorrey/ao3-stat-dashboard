@@ -14,7 +14,8 @@ from websockets.sync.client import connect
 
 BROWSER_START_TIMEOUT_SECONDS = 20
 PAGE_LOAD_TIMEOUT_SECONDS = 30
-
+DEVTOOLS_COMMAND_TIMEOUT_SECONDS = 30
+BROWSER_FETCH_ATTEMPTS = 2
 
 class BrowserFetchError(RuntimeError):
     pass
@@ -200,58 +201,60 @@ class HeadedChromiumSession:
             "Page.enable"
         )
 
-    def _command(
-        self,
-        method,
-        params=None,
-    ):
-        if self.websocket is None:
+def _command(
+    self,
+    method,
+    params=None,
+):
+    if self.websocket is None:
+        raise BrowserFetchError(
+            "Chromium DevTools connection "
+            "is not available."
+        )
+
+    command_id = (
+        self.next_command_id
+    )
+
+    self.next_command_id += 1
+
+    payload = {
+        "id": command_id,
+        "method": method,
+    }
+
+    if params is not None:
+        payload["params"] = params
+
+    self.websocket.send(
+        json.dumps(payload)
+    )
+
+    while True:
+        message = json.loads(
+            self.websocket.recv(
+                timeout=(
+                    DEVTOOLS_COMMAND_TIMEOUT_SECONDS
+                )
+            )
+        )
+
+        if (
+            message.get("id")
+            != command_id
+        ):
+            continue
+
+        if "error" in message:
             raise BrowserFetchError(
-                "Chromium DevTools connection "
-                "is not available."
+                "Chromium DevTools error: "
+                f"{message['error']}"
             )
 
-        command_id = (
-            self.next_command_id
+        return message.get(
+            "result",
+            {},
         )
-
-        self.next_command_id += 1
-
-        payload = {
-            "id": command_id,
-            "method": method,
-        }
-
-        if params is not None:
-            payload["params"] = params
-
-        self.websocket.send(
-            json.dumps(payload)
-        )
-
-        while True:
-            message = json.loads(
-                self.websocket.recv(
-                    timeout=10
-                )
-            )
-
-            if (
-                message.get("id")
-                != command_id
-            ):
-                continue
-
-            if "error" in message:
-                raise BrowserFetchError(
-                    "Chromium DevTools error: "
-                    f"{message['error']}"
-                )
-
-            return message.get(
-                "result",
-                {},
-            )
 
     def _evaluate(
         self,
@@ -436,19 +439,62 @@ _browser_session = None
 def fetch_browser_page(url):
     global _browser_session
 
-    if _browser_session is None:
-        print(
-            "  Starting headed Chromium "
-            "fallback..."
-        )
+    last_error = None
 
-        _browser_session = (
-            HeadedChromiumSession()
-        )
+    for attempt in range(
+        1,
+        BROWSER_FETCH_ATTEMPTS + 1,
+    ):
+        try:
+            if _browser_session is None:
+                if attempt == 1:
+                    print(
+                        "  Starting headed "
+                        "Chromium fallback..."
+                    )
 
-    return _browser_session.fetch(
-        url
-    )
+                else:
+                    print(
+                        "  Restarting headed "
+                        "Chromium fallback..."
+                    )
+
+                _browser_session = (
+                    HeadedChromiumSession()
+                )
+
+            return _browser_session.fetch(
+                url
+            )
+
+        except Exception as error:
+            last_error = error
+
+            print(
+                "  Headed Chromium fetch "
+                f"attempt {attempt}/"
+                f"{BROWSER_FETCH_ATTEMPTS} "
+                f"failed: {error}"
+            )
+
+            close_browser_session()
+
+            if (
+                attempt
+                < BROWSER_FETCH_ATTEMPTS
+            ):
+                print(
+                    "  Retrying the same page "
+                    "with a fresh Chromium "
+                    "session..."
+                )
+
+    raise BrowserFetchError(
+        "Headed Chromium failed after "
+        f"{BROWSER_FETCH_ATTEMPTS} "
+        f"attempts for {url}: "
+        f"{last_error}"
+    ) from last_error
 
 
 def close_browser_session():
