@@ -1137,6 +1137,46 @@ def render_system_health():
                 )
             )
 
+            successful_works = (
+                collection_notice.get(
+                    "successful_works",
+                    [],
+                )
+            )
+
+            if successful_works:
+                with st.expander(
+                    f"Successful works "
+                    f"({len(successful_works)})",
+                    expanded=bool(failed_works),
+                ):
+                    success_table = (
+                        pd.DataFrame(
+                            successful_works
+                        )
+                    )
+
+                    success_table = (
+                        success_table.rename(
+                            columns={
+                                "title": "Work",
+                                "ao3_work_id":
+                                    "AO3 Work ID",
+                                "hits": "Hits",
+                                "kudos": "Kudos",
+                                "comments": "Comments",
+                                "public_bookmarks":
+                                    "Bookmarks",
+                            }
+                        )
+                    )
+
+                    st.dataframe(
+                        success_table,
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
             if failed_works:
                 with st.expander(
                     f"Failed works "
@@ -1329,6 +1369,13 @@ def render_system_health():
                     )
                 )
 
+                successful_works = (
+                    collection_result.get(
+                        "successful_works",
+                        [],
+                    )
+                )
+
                 events_created = (
                     collection_result.get(
                         "events_created",
@@ -1379,6 +1426,8 @@ def render_system_health():
                 ] = {
                     "type": notice_type,
                     "message": message,
+                    "successful_works":
+                        successful_works,
                     "failed_works":
                         failed_works,
                 }
@@ -1399,6 +1448,7 @@ def render_system_health():
                         "in progress."
                     ),
                     "failed_works": [],
+                    "successful_works": [],
                 }
 
             except Exception as error:
