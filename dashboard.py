@@ -1,3 +1,6 @@
+import sys
+from contextlib import contextmanager
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -14,6 +17,138 @@ from dashboard_data import (
     get_system_health,
 )
 
+
+class DashboardProgressStream:
+    def __init__(
+        self,
+        placeholder,
+        original_stream,
+        logger,
+        log_level="info",
+        max_lines=18,
+    ):
+        self.placeholder = placeholder
+        self.original_stream = (
+            original_stream
+        )
+        self.logger = logger
+        self.log_level = log_level
+        self.max_lines = max_lines
+
+        self.buffer = ""
+        self.lines = []
+
+    def _publish_line(
+        self,
+        line,
+    ):
+        line = line.rstrip()
+
+        if not line:
+            return
+
+        self.lines.append(
+            line
+        )
+
+        self.lines = self.lines[
+            -self.max_lines:
+        ]
+
+        self.placeholder.code(
+            "\n".join(
+                self.lines
+            ),
+            language=None,
+        )
+
+        log_method = getattr(
+            self.logger,
+            self.log_level,
+        )
+
+        log_method(
+            line
+        )
+
+    def write(self, text):
+        if not text:
+            return 0
+
+        self.original_stream.write(
+            text
+        )
+
+        self.original_stream.flush()
+
+        self.buffer += text
+
+        while "\n" in self.buffer:
+            line, self.buffer = (
+                self.buffer.split(
+                    "\n",
+                    1,
+                )
+            )
+
+            self._publish_line(
+                line
+            )
+
+        return len(text)
+
+    def flush(self):
+        self.original_stream.flush()
+
+        if self.buffer:
+            self._publish_line(
+                self.buffer
+            )
+
+            self.buffer = ""
+
+    def isatty(self):
+        return self.original_stream.isatty()
+
+
+@contextmanager
+def capture_dashboard_progress(
+    placeholder,
+    logger,
+):
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+
+    stdout_stream = (
+        DashboardProgressStream(
+            placeholder,
+            original_stdout,
+            logger,
+            log_level="info",
+        )
+    )
+
+    stderr_stream = (
+        DashboardProgressStream(
+            placeholder,
+            original_stderr,
+            logger,
+            log_level="error",
+        )
+    )
+
+    sys.stdout = stdout_stream
+    sys.stderr = stderr_stream
+
+    try:
+        yield
+
+    finally:
+        stdout_stream.flush()
+        stderr_stream.flush()
+
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
 
 st.set_page_config(
     page_title="AO3 Stats Dashboard",
@@ -1325,14 +1460,20 @@ def render_system_health():
             )
 
             try:
+                progress_output = st.empty()
+
                 with st.spinner(
                     "Collecting AO3 stats..."
                 ):
-                    result = (
-                        run_collection_cycle(
-                            trigger="manual"
+                    with capture_dashboard_progress(
+                        progress_output,
+                        logger,
+                    ):
+                        result = (
+                            run_collection_cycle(
+                                trigger="manual"
+                            )
                         )
-                    )
 
                 collection_result = (
                     result.get(

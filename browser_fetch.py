@@ -15,9 +15,13 @@ from websockets.sync.client import connect
 BROWSER_START_TIMEOUT_SECONDS = 20
 PAGE_LOAD_TIMEOUT_SECONDS = 30
 DEVTOOLS_COMMAND_TIMEOUT_SECONDS = 30
+
 BROWSER_FETCH_ATTEMPTS = 2
 
-class BrowserFetchError(RuntimeError):
+
+class BrowserFetchError(
+    RuntimeError
+):
     pass
 
 
@@ -63,7 +67,9 @@ class HeadedChromiumSession:
         )
 
         chromium = (
-            shutil.which("chromium")
+            shutil.which(
+                "chromium"
+            )
             or shutil.which(
                 "chromium-browser"
             )
@@ -97,7 +103,7 @@ class HeadedChromiumSession:
             "about:blank",
         ]
 
-        options = {
+        popen_options = {
             "stdout":
                 subprocess.DEVNULL,
             "stderr":
@@ -105,13 +111,13 @@ class HeadedChromiumSession:
         }
 
         if os.name == "posix":
-            options[
+            popen_options[
                 "start_new_session"
             ] = True
 
         self.process = subprocess.Popen(
             command,
-            **options,
+            **popen_options,
         )
 
         devtools_file = (
@@ -147,9 +153,12 @@ class HeadedChromiumSession:
                     self.devtools_port = int(
                         lines[0]
                     )
+
                     break
 
-            time.sleep(0.2)
+            time.sleep(
+                0.2
+            )
 
         if self.devtools_port is None:
             raise BrowserFetchError(
@@ -157,20 +166,38 @@ class HeadedChromiumSession:
                 "Chromium DevTools."
             )
 
-        targets = requests.get(
-            (
-                "http://127.0.0.1:"
-                f"{self.devtools_port}"
-                "/json/list"
-            ),
-            timeout=5,
-        ).json()
+        try:
+            targets_response = (
+                requests.get(
+                    (
+                        "http://127.0.0.1:"
+                        f"{self.devtools_port}"
+                        "/json/list"
+                    ),
+                    timeout=5,
+                )
+            )
+
+            targets_response.raise_for_status()
+
+            targets = (
+                targets_response.json()
+            )
+
+        except Exception as error:
+            raise BrowserFetchError(
+                "Could not retrieve Chromium "
+                "DevTools targets: "
+                f"{error}"
+            ) from error
 
         page = next(
             (
                 target
                 for target in targets
-                if target.get("type")
+                if target.get(
+                    "type"
+                )
                 == "page"
             ),
             None,
@@ -192,69 +219,95 @@ class HeadedChromiumSession:
                 "provide a DevTools WebSocket."
             )
 
-        self.websocket = connect(
-            websocket_url,
-            open_timeout=5,
-        )
+        try:
+            self.websocket = connect(
+                websocket_url,
+                open_timeout=5,
+            )
+
+        except Exception as error:
+            raise BrowserFetchError(
+                "Could not connect to Chromium "
+                "DevTools WebSocket: "
+                f"{error}"
+            ) from error
 
         self._command(
             "Page.enable"
         )
 
-def _command(
-    self,
-    method,
-    params=None,
-):
-    if self.websocket is None:
-        raise BrowserFetchError(
-            "Chromium DevTools connection "
-            "is not available."
+    def _command(
+        self,
+        method,
+        params=None,
+    ):
+        if self.websocket is None:
+            raise BrowserFetchError(
+                "Chromium DevTools connection "
+                "is not available."
+            )
+
+        command_id = (
+            self.next_command_id
         )
 
-    command_id = (
-        self.next_command_id
-    )
+        self.next_command_id += 1
 
-    self.next_command_id += 1
+        payload = {
+            "id": command_id,
+            "method": method,
+        }
 
-    payload = {
-        "id": command_id,
-        "method": method,
-    }
+        if params is not None:
+            payload[
+                "params"
+            ] = params
 
-    if params is not None:
-        payload["params"] = params
-
-    self.websocket.send(
-        json.dumps(payload)
-    )
-
-    while True:
-        message = json.loads(
-            self.websocket.recv(
-                timeout=(
-                    DEVTOOLS_COMMAND_TIMEOUT_SECONDS
+        try:
+            self.websocket.send(
+                json.dumps(
+                    payload
                 )
             )
-        )
 
-        if (
-            message.get("id")
-            != command_id
-        ):
-            continue
+            while True:
+                message = json.loads(
+                    self.websocket.recv(
+                        timeout=(
+                            DEVTOOLS_COMMAND_TIMEOUT_SECONDS
+                        )
+                    )
+                )
 
-        if "error" in message:
+                if (
+                    message.get(
+                        "id"
+                    )
+                    != command_id
+                ):
+                    continue
+
+                if "error" in message:
+                    raise BrowserFetchError(
+                        "Chromium DevTools "
+                        "error: "
+                        f"{message['error']}"
+                    )
+
+                return message.get(
+                    "result",
+                    {},
+                )
+
+        except BrowserFetchError:
+            raise
+
+        except Exception as error:
             raise BrowserFetchError(
-                "Chromium DevTools error: "
-                f"{message['error']}"
-            )
-
-        return message.get(
-            "result",
-            {},
-        )
+                "Chromium DevTools command "
+                f"{method} failed: "
+                f"{error}"
+            ) from error
 
     def _evaluate(
         self,
@@ -276,7 +329,9 @@ def _command(
         )
 
         if (
-            evaluation.get("subtype")
+            evaluation.get(
+                "subtype"
+            )
             == "error"
         ):
             raise BrowserFetchError(
@@ -288,7 +343,10 @@ def _command(
             "value"
         )
 
-    def fetch(self, url):
+    def fetch(
+        self,
+        url,
+    ):
         navigation = self._command(
             "Page.navigate",
             {
@@ -302,7 +360,8 @@ def _command(
 
         if error_text:
             raise BrowserFetchError(
-                "Chromium navigation failed: "
+                "Chromium navigation "
+                "failed: "
                 f"{error_text}"
             )
 
@@ -311,7 +370,9 @@ def _command(
             + PAGE_LOAD_TIMEOUT_SECONDS
         )
 
-        time.sleep(1)
+        time.sleep(
+            1
+        )
 
         while time.monotonic() < deadline:
             state = self._evaluate(
@@ -321,15 +382,23 @@ def _command(
             if state == "complete":
                 break
 
-            time.sleep(0.25)
+            time.sleep(
+                0.25
+            )
 
         else:
             raise BrowserFetchError(
                 "Timed out waiting for AO3 "
-                "to finish loading in Chromium."
+                "to finish loading in "
+                "Chromium."
             )
 
-        time.sleep(0.5)
+        # Give AO3 and Chromium a short
+        # settling period after readyState
+        # reaches complete.
+        time.sleep(
+            0.5
+        )
 
         metadata_json = self._evaluate(
             """
@@ -346,9 +415,16 @@ def _command(
                 "page metadata."
             )
 
-        metadata = json.loads(
-            metadata_json
-        )
+        try:
+            metadata = json.loads(
+                metadata_json
+            )
+
+        except json.JSONDecodeError as error:
+            raise BrowserFetchError(
+                "Chromium returned invalid "
+                "page metadata."
+            ) from error
 
         html = self._evaluate(
             (
@@ -359,13 +435,18 @@ def _command(
 
         if not html:
             raise BrowserFetchError(
-                "Chromium returned an empty "
-                "page."
+                "Chromium returned an "
+                "empty page."
             )
 
         title = metadata.get(
             "title",
             "",
+        )
+
+        final_url = metadata.get(
+            "href",
+            url,
         )
 
         if (
@@ -382,10 +463,7 @@ def _command(
 
         return BrowserPage(
             text=html,
-            url=metadata.get(
-                "href",
-                url,
-            ),
+            url=final_url,
             title=title,
         )
 
@@ -393,6 +471,7 @@ def _command(
         if self.websocket is not None:
             try:
                 self.websocket.close()
+
             except Exception:
                 pass
 
@@ -421,7 +500,21 @@ def _command(
 
                 except Exception:
                     try:
-                        self.process.kill()
+                        if (
+                            self.process.poll()
+                            is None
+                        ):
+                            if os.name == "posix":
+                                os.killpg(
+                                    os.getpgid(
+                                        self.process.pid
+                                    ),
+                                    signal.SIGKILL,
+                                )
+
+                            else:
+                                self.process.kill()
+
                     except Exception:
                         pass
 
@@ -436,7 +529,9 @@ def _command(
 _browser_session = None
 
 
-def fetch_browser_page(url):
+def fetch_browser_page(
+    url,
+):
     global _browser_session
 
     last_error = None
