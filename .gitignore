@@ -4,3 +4,4 @@ __pycache__/
 *.db
 logs/
 .ao3_collection.lock
+resend_api.txt
