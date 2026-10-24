@@ -1130,6 +1130,44 @@ def render_system_health():
                     notice_message
                 )
 
+            failed_works = (
+                collection_notice.get(
+                    "failed_works",
+                    [],
+                )
+            )
+
+            if failed_works:
+                with st.expander(
+                    f"Failed works "
+                    f"({len(failed_works)})",
+                    expanded=True,
+                ):
+                    failure_table = (
+                        pd.DataFrame(
+                            failed_works
+                        )
+                    )
+
+                    failure_table = (
+                        failure_table.rename(
+                            columns={
+                                "title":
+                                    "Work",
+                                "ao3_work_id":
+                                    "AO3 Work ID",
+                                "error":
+                                    "Error",
+                            }
+                        )
+                    )
+
+                    st.dataframe(
+                        failure_table,
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
         column1, column2 = (
             st.columns(2)
         )
@@ -1284,6 +1322,13 @@ def render_system_health():
                     )
                 )
 
+                failed_works = (
+                    collection_result.get(
+                        "failed_works",
+                        [],
+                    )
+                )
+
                 events_created = (
                     collection_result.get(
                         "events_created",
@@ -1320,11 +1365,18 @@ def render_system_health():
                     f"{message.lower()}"
                 )
 
+                if failed > 0:
+                    notice_type = "warning"
+                else:
+                    notice_type = "success"
+
                 st.session_state[
                     "collection_notice"
                 ] = {
-                    "type": "success",
+                    "type": notice_type,
                     "message": message,
+                    "failed_works":
+                        failed_works,
                 }
 
             except CollectionAlreadyRunning:
@@ -1342,6 +1394,7 @@ def render_system_health():
                         "A collection is already "
                         "in progress."
                     ),
+                    "failed_works": [],
                 }
 
             except Exception as error:
@@ -1358,6 +1411,7 @@ def render_system_health():
                         "Manual collection failed: "
                         f"{error}"
                     ),
+                    "failed_works": [],
                 }
 
             st.rerun()

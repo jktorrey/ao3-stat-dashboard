@@ -296,11 +296,13 @@ def collect_all_stats():
             "saved": 0,
             "failed": 0,
             "events_created": 0,
+            "failed_works": [],
         }
 
     saved = 0
     failed = 0
     events_created = 0
+    failed_works = []
 
     for (
         work_id,
@@ -324,6 +326,14 @@ def collect_all_stats():
 
         except Exception as error:
             failed += 1
+
+            failed_works.append(
+                {
+                    "title": title,
+                    "ao3_work_id": ao3_work_id,
+                    "error": str(error),
+                }
+            )
 
             print(
                 f"  Collection failed: {error}"
@@ -518,6 +528,7 @@ def collect_all_stats():
         "saved": saved,
         "failed": failed,
         "events_created": events_created,
+        "failed_works": failed_works,
     }
 
 
