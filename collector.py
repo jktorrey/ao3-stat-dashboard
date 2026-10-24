@@ -439,7 +439,148 @@ def fetch_ao3_page(
     )
 
 
-def fetch_work_stats(url):
+def validate_work_page(
+    html,
+    expected_ao3_work_id=None,
+):
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
+
+    page_title = ""
+
+    if soup.title is not None:
+        page_title = (
+            soup.title.get_text(
+                " ",
+                strip=True,
+            )
+        )
+
+    stats_container = (
+        soup.select_one(
+            "dl.stats"
+        )
+    )
+
+    words_element = (
+        soup.select_one(
+            "dd.words"
+        )
+    )
+
+    chapters_element = (
+        soup.select_one(
+            "dd.chapters"
+        )
+    )
+
+    missing_parts = []
+
+    if stats_container is None:
+        missing_parts.append(
+            "stats container"
+        )
+
+    if words_element is None:
+        missing_parts.append(
+            "word count"
+        )
+
+    if chapters_element is None:
+        missing_parts.append(
+            "chapter count"
+        )
+
+    if expected_ao3_work_id is not None:
+        expected_path = (
+            f"/works/"
+            f"{expected_ao3_work_id}"
+        )
+
+        if expected_path not in html:
+            missing_parts.append(
+                "expected work ID"
+            )
+
+    if not missing_parts:
+        return
+
+    details = ", ".join(
+        missing_parts
+    )
+
+    if page_title:
+        raise RuntimeError(
+            "AO3 returned a page that does "
+            "not appear to be the requested "
+            "work page. "
+            f"Missing: {details}. "
+            f'Page title: "{page_title}".'
+        )
+
+    raise RuntimeError(
+        "AO3 returned a page that does "
+        "not appear to be the requested "
+        "work page. "
+        f"Missing: {details}."
+    )
+
+
+def validate_work_stats(
+    stats,
+):
+    missing_fields = []
+
+    if stats.get(
+        "word_count"
+    ) is None:
+        missing_fields.append(
+            "word count"
+        )
+
+    if stats.get(
+        "chapters_published"
+    ) is None:
+        missing_fields.append(
+            "published chapter count"
+        )
+
+    if not missing_fields:
+        return
+
+    details = ", ".join(
+        missing_fields
+    )
+
+    raise RuntimeError(
+        "AO3 work page was received, "
+        "but required work statistics "
+        "could not be parsed. "
+        f"Missing: {details}. "
+        "Snapshot was not saved."
+    )
+
+
+def fetch_work_stats(
+    url,
+):
+    work_id_match = re.search(
+        r"/works/(\d+)",
+        url,
+    )
+
+    if work_id_match is None:
+        raise ValueError(
+            "Could not determine AO3 "
+            f"work ID from URL: {url}"
+        )
+
+    expected_ao3_work_id = (
+        work_id_match.group(1)
+    )
+
     separator = (
         "&"
         if "?" in url
@@ -457,13 +598,28 @@ def fetch_work_stats(url):
     )
 
     try:
-        return parse_work_stats(
-            response.text
+        html = response.text
+
+        validate_work_page(
+            html,
+            expected_ao3_work_id=(
+                expected_ao3_work_id
+            ),
         )
+
+        stats = parse_work_stats(
+            html
+        )
+
+        validate_work_stats(
+            stats
+        )
+
+        return stats
 
     finally:
         response.close()
-
+        
 
 def parse_work_stats(html):
     soup = BeautifulSoup(
