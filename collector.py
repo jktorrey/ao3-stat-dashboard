@@ -37,6 +37,7 @@ SSL_ERROR_STATUSES = {
 
 SSL_CIRCUIT_THRESHOLD = 3
 BROWSER_FAILURE_THRESHOLD = 3
+HUMAN_CHALLENGE_THRESHOLD = 2
 
 RETRY_DELAYS = {
     408: 30,
@@ -59,9 +60,13 @@ RETRYABLE_STATUSES = set(
 
 _consecutive_ssl_failures = 0
 _ssl_circuit_open = False
+
 _browser_fallback_active = False
 _browser_fallback_unavailable = False
 _consecutive_browser_failures = 0
+
+_consecutive_human_challenges = 0
+_human_challenge_circuit_open = False
 
 class AO3TransportUnavailable(
     RuntimeError
@@ -81,14 +86,20 @@ def reset_ao3_transport_state():
     global _browser_fallback_active
     global _browser_fallback_unavailable
     global _consecutive_browser_failures
+    global _consecutive_human_challenges
+    global _human_challenge_circuit_open
 
     close_browser_session()
 
     _consecutive_ssl_failures = 0
     _ssl_circuit_open = False
+
     _browser_fallback_active = False
     _browser_fallback_unavailable = False
     _consecutive_browser_failures = 0
+
+    _consecutive_human_challenges = 0
+    _human_challenge_circuit_open = False
 
 
 def record_ssl_failure(
@@ -167,6 +178,29 @@ def record_browser_failure():
     return _consecutive_browser_failures
 
 
+def reset_human_challenge_count():
+    global _consecutive_human_challenges
+    global _human_challenge_circuit_open
+
+    _consecutive_human_challenges = 0
+    _human_challenge_circuit_open = False
+
+
+def record_human_challenge():
+    global _consecutive_human_challenges
+    global _human_challenge_circuit_open
+
+    _consecutive_human_challenges += 1
+
+    if (
+        _consecutive_human_challenges
+        >= HUMAN_CHALLENGE_THRESHOLD
+    ):
+        _human_challenge_circuit_open = True
+
+    return _consecutive_human_challenges
+
+
 def get_retry_delay(
     response,
     status_code,
@@ -221,8 +255,17 @@ def fetch_browser_fallback(
 ):
     global _browser_fallback_active
     global _browser_fallback_unavailable
+    global _human_challenge_circuit_open
 
     _browser_fallback_active = True
+
+    if _human_challenge_circuit_open:
+        raise AO3TransportUnavailable(
+            "AO3's Cloudflare human-verification "
+            "circuit is open after repeated "
+            "challenges. This work was skipped "
+            "for the current collection cycle."
+        )
 
     if _browser_fallback_unavailable:
         raise AO3TransportUnavailable(
@@ -241,17 +284,34 @@ def fetch_browser_fallback(
             url
         )
 
-    except HumanVerificationRequired:
-        # Human verification is specific to
-        # this request. Chromium itself is
-        # clearly functioning, so don't count
-        # this as a browser infrastructure
-        # failure.
+    except HumanVerificationRequired as error:
         reset_browser_failure_count()
+
+        challenge_count = (
+            record_human_challenge()
+        )
 
         close_browser_session()
 
-        raise
+        if _human_challenge_circuit_open:
+            raise HumanVerificationRequired(
+                f"{error} "
+                "Human-verification circuit "
+                "opened after "
+                f"{challenge_count} consecutive "
+                "challenges. Remaining works "
+                "will be skipped for this "
+                "collection cycle."
+            ) from error
+
+        raise HumanVerificationRequired(
+            f"{error} "
+            "Browser fallback remains available "
+            "for the next work. Consecutive "
+            "human-verification challenges: "
+            f"{challenge_count}/"
+            f"{HUMAN_CHALLENGE_THRESHOLD}."
+        ) from error
 
     except Exception as error:
         failure_count = (
@@ -285,6 +345,7 @@ def fetch_browser_fallback(
         ) from error
 
     reset_browser_failure_count()
+    reset_human_challenge_count()
     reset_ssl_failure_count()
 
     return page

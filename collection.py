@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 
 from collector import (
@@ -14,6 +15,8 @@ from database import (
     chapter_event_exists,
     event_type_exists,
 )
+
+INTER_WORK_DELAY_SECONDS = 5
 
 
 def is_complete(
@@ -546,12 +549,28 @@ def collect_all_stats():
     successful_works = []
     failed_works = []
 
-    for (
+
+    for index, (
         work_id,
         ao3_work_id,
         title,
         url,
-    ) in works:
+    ) in enumerate(
+        works
+    ):
+        if index > 0:
+            print(
+                "Waiting "
+                f"{INTER_WORK_DELAY_SECONDS} "
+                "seconds before the next "
+                "AO3 work..."
+            )
+            print()
+
+            time.sleep(
+                INTER_WORK_DELAY_SECONDS
+            )
+
         result = collect_work_stats(
             work_id=work_id,
             ao3_work_id=ao3_work_id,
