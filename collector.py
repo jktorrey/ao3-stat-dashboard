@@ -36,6 +36,7 @@ SSL_ERROR_STATUSES = {
 }
 
 SSL_CIRCUIT_THRESHOLD = 3
+BROWSER_FAILURE_THRESHOLD = 3
 
 RETRY_DELAYS = {
     408: 30,
@@ -60,6 +61,7 @@ _consecutive_ssl_failures = 0
 _ssl_circuit_open = False
 _browser_fallback_active = False
 _browser_fallback_unavailable = False
+_consecutive_browser_failures = 0
 
 class AO3TransportUnavailable(
     RuntimeError
@@ -78,6 +80,7 @@ def reset_ao3_transport_state():
     global _ssl_circuit_open
     global _browser_fallback_active
     global _browser_fallback_unavailable
+    global _consecutive_browser_failures
 
     close_browser_session()
 
@@ -85,6 +88,7 @@ def reset_ao3_transport_state():
     _ssl_circuit_open = False
     _browser_fallback_active = False
     _browser_fallback_unavailable = False
+    _consecutive_browser_failures = 0
 
 
 def record_ssl_failure(
@@ -142,6 +146,27 @@ def reset_ssl_failure_count():
     _ssl_circuit_open = False
 
 
+def reset_browser_failure_count():
+    global _consecutive_browser_failures
+
+    _consecutive_browser_failures = 0
+
+
+def record_browser_failure():
+    global _consecutive_browser_failures
+    global _browser_fallback_unavailable
+
+    _consecutive_browser_failures += 1
+
+    if (
+        _consecutive_browser_failures
+        >= BROWSER_FAILURE_THRESHOLD
+    ):
+        _browser_fallback_unavailable = True
+
+    return _consecutive_browser_failures
+
+
 def get_retry_delay(
     response,
     status_code,
@@ -191,21 +216,20 @@ def build_request_url(
     )
 
 
-def fetch_browser_fallback(url):
+def fetch_browser_fallback(
+    url,
+):
     global _browser_fallback_active
     global _browser_fallback_unavailable
 
-    # Once this path is selected, direct HTTP
-    # is known to be unhealthy for this cycle.
-    # Keep browser fallback selected even if
-    # Chromium itself later fails.
     _browser_fallback_active = True
 
     if _browser_fallback_unavailable:
         raise AO3TransportUnavailable(
             "Headed Chromium fallback "
             "is unavailable for this "
-            "collection cycle."
+            "collection cycle after repeated "
+            "browser failures."
         )
 
     time.sleep(
@@ -217,16 +241,50 @@ def fetch_browser_fallback(url):
             url
         )
 
-    except Exception as error:
-        _browser_fallback_unavailable = True
+    except HumanVerificationRequired:
+        # Human verification is specific to
+        # this request. Chromium itself is
+        # clearly functioning, so don't count
+        # this as a browser infrastructure
+        # failure.
+        reset_browser_failure_count()
 
         close_browser_session()
 
+        raise
+
+    except Exception as error:
+        failure_count = (
+            record_browser_failure()
+        )
+
+        close_browser_session()
+
+        if _browser_fallback_unavailable:
+            raise AO3TransportUnavailable(
+                "Headed Chromium fallback "
+                "failed for "
+                f"{url}: {error} "
+                "Browser fallback has been "
+                "disabled for this collection "
+                "cycle after "
+                f"{failure_count} consecutive "
+                "failures."
+            ) from error
+
         raise AO3TransportUnavailable(
             "Headed Chromium fallback "
-            f"failed for {url}: {error}"
+            "failed for "
+            f"{url}: {error} "
+            "This work was skipped, but "
+            "browser fallback remains "
+            "available for the next work. "
+            "Consecutive browser failures: "
+            f"{failure_count}/"
+            f"{BROWSER_FAILURE_THRESHOLD}."
         ) from error
 
+    reset_browser_failure_count()
     reset_ssl_failure_count()
 
     return page
