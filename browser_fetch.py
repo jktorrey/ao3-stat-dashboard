@@ -7,7 +7,8 @@ import signal
 import subprocess
 import tempfile
 import time
-
+import base64
+from datetime import datetime, timezone
 import requests
 from websockets.sync.client import connect
 
@@ -372,6 +373,145 @@ class HeadedChromiumSession:
                 "page metadata."
             ) from error
 
+    def _save_challenge_diagnostics(
+        self,
+    ):
+        project_dir = (
+            Path(__file__)
+            .resolve()
+            .parent
+        )
+
+        diagnostic_dir = (
+            project_dir
+            / "logs"
+            / "browser_diagnostics"
+        )
+
+        diagnostic_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        timestamp = (
+            datetime.now(
+                timezone.utc
+            )
+            .strftime(
+                "%Y%m%dT%H%M%S_%fZ"
+            )
+        )
+
+        filename_prefix = (
+            "cloudflare_challenge_"
+            f"{timestamp}"
+        )
+
+        metadata = (
+            self._get_page_metadata()
+        )
+
+        html = self._evaluate(
+            (
+                "document.documentElement."
+                "outerHTML"
+            )
+        )
+
+        if html is None:
+            html = ""
+
+        visible_text = self._evaluate(
+            """
+            document.body
+                ? document.body.innerText
+                : ""
+            """
+        )
+
+        if visible_text is None:
+            visible_text = ""
+
+        screenshot_result = (
+            self._command(
+                "Page.captureScreenshot",
+                {
+                    "format": "png",
+                    "captureBeyondViewport":
+                        True,
+                },
+            )
+        )
+
+        screenshot_data = (
+            screenshot_result.get(
+                "data"
+            )
+        )
+
+        html_path = (
+            diagnostic_dir
+            / (
+                filename_prefix
+                + ".html"
+            )
+        )
+
+        text_path = (
+            diagnostic_dir
+            / (
+                filename_prefix
+                + ".txt"
+            )
+        )
+
+        screenshot_path = (
+            diagnostic_dir
+            / (
+                filename_prefix
+                + ".png"
+            )
+        )
+
+        html_path.write_text(
+            html,
+            encoding="utf-8",
+        )
+
+        report = (
+            "Cloudflare challenge "
+            "diagnostic\n\n"
+            "URL:\n"
+            f"{metadata.get('href', '')}\n\n"
+            "Title:\n"
+            f"{metadata.get('title', '')}\n\n"
+            "Visible page text:\n"
+            f"{visible_text}\n"
+        )
+
+        text_path.write_text(
+            report,
+            encoding="utf-8",
+        )
+
+        if screenshot_data:
+            screenshot_path.write_bytes(
+                base64.b64decode(
+                    screenshot_data
+                )
+            )
+
+        print(
+            "  Saved Cloudflare challenge "
+            "diagnostics to:"
+        )
+
+        print(
+            f"    {diagnostic_dir}"
+        )
+
+        return diagnostic_dir
+
     def fetch(
         self,
         url,
@@ -445,6 +585,7 @@ class HeadedChromiumSession:
                     time.sleep(
                         1
                     )
+
                     continue
 
                 raise
@@ -482,7 +623,9 @@ class HeadedChromiumSession:
                 print(
                     "  Cloudflare browser "
                     "challenge detected; "
-                    "waiting for it to clear..."
+                    "waiting up to "
+                    f"{CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS} "
+                    "seconds for it to clear..."
                 )
 
             elapsed_seconds = int(
@@ -506,12 +649,39 @@ class HeadedChromiumSession:
                 time.monotonic()
                 >= challenge_deadline
             ):
-                raise BrowserFetchError(
+                diagnostic_dir = None
+
+                try:
+                    diagnostic_dir = (
+                        self
+                        ._save_challenge_diagnostics()
+                    )
+
+                except Exception as error:
+                    print(
+                        "  Could not save "
+                        "Cloudflare challenge "
+                        "diagnostics: "
+                        f"{error}"
+                    )
+
+                message = (
                     "Cloudflare browser "
                     "challenge did not clear "
-                    "within "
-                    f"{CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS} "
-                    "seconds."
+                    "within the configured "
+                    f"{CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS}-"
+                    "second timeout."
+                )
+
+                if diagnostic_dir is not None:
+                    message += (
+                        " Diagnostics were "
+                        "saved under "
+                        f"{diagnostic_dir}."
+                    )
+
+                raise BrowserFetchError(
+                    message
                 )
 
             time.sleep(
@@ -623,7 +793,6 @@ class HeadedChromiumSession:
             title=title,
         )
 
-
     def close(self):
         if self.websocket is not None:
             try:
@@ -681,7 +850,7 @@ class HeadedChromiumSession:
             self.profile_dir,
             ignore_errors=True,
         )
-
+        
 
 _browser_session = None
 
