@@ -296,12 +296,14 @@ def collect_all_stats():
             "saved": 0,
             "failed": 0,
             "events_created": 0,
+            "successful_works": [],
             "failed_works": [],
         }
 
     saved = 0
     failed = 0
     events_created = 0
+    successful_works = []
     failed_works = []
 
     for (
@@ -391,6 +393,21 @@ def collect_all_stats():
         )
 
         saved += 1
+
+        successful_works.append(
+            {
+                "title": title,
+                "ao3_work_id": ao3_work_id,
+                "hits": stats.get("hits"),
+                "kudos": stats.get("kudos"),
+                "comments": stats.get(
+                    "comments"
+                ),
+                "public_bookmarks": stats.get(
+                    "public_bookmarks"
+                ),
+            }
+        )
 
         chapter_increase = (
             previous_chapters_published
@@ -528,6 +545,8 @@ def collect_all_stats():
         "saved": saved,
         "failed": failed,
         "events_created": events_created,
+        "successful_works":
+            successful_works,
         "failed_works": failed_works,
     }
 
