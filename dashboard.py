@@ -1365,10 +1365,14 @@ def render_system_health():
                     f"{message.lower()}"
                 )
 
-                if failed > 0:
-                    notice_type = "warning"
-                else:
+                if failed == 0:
                     notice_type = "success"
+
+                elif saved ==0:
+                    notice_type = "error"
+
+                else:
+                    notice_type = "warning"
 
                 st.session_state[
                     "collection_notice"
