@@ -25,6 +25,10 @@ class BrowserFetchError(
 ):
     pass
 
+class HumanVerificationRequired(
+    BrowserFetchError
+):
+    pass
 
 class BrowserPage:
     def __init__(
@@ -610,6 +614,80 @@ class HeadedChromiumSession:
             if not is_cloudflare_challenge:
                 break
 
+            visible_text = self._evaluate(
+                """
+                document.body
+                    ? document.body.innerText
+                    : ""
+                """
+            )
+
+            if visible_text is None:
+                visible_text = ""
+
+            normalized_text = (
+                visible_text.lower()
+            )
+
+            human_challenge_phrases = (
+                "please prove that you are "
+                "not a robot",
+                "verify you are human",
+                "prove that you are human",
+            )
+
+            human_verification_required = any(
+                phrase in normalized_text
+                for phrase
+                in human_challenge_phrases
+            )
+
+            if human_verification_required:
+                diagnostic_dir = None
+
+                try:
+                    diagnostic_dir = (
+                        self
+                        ._save_challenge_diagnostics()
+                    )
+
+                except Exception as error:
+                    print(
+                        "  Could not save "
+                        "Cloudflare challenge "
+                        "diagnostics: "
+                        f"{error}"
+                    )
+
+                print(
+                    "  Cloudflare requires "
+                    "human verification for "
+                    "this request."
+                )
+
+                message = (
+                    "AO3's Cloudflare "
+                    "protection requires human "
+                    "verification for this "
+                    "request. Automated "
+                    "collection cannot continue "
+                    "for this work. No snapshot "
+                    "was saved. A later "
+                    "collection may succeed "
+                    "normally."
+                )
+
+                if diagnostic_dir is not None:
+                    message += (
+                        " Diagnostics were "
+                        "saved under "
+                        f"{diagnostic_dir}."
+                    )
+
+                raise HumanVerificationRequired(
+                    message
+                )
+
             if challenge_started_at is None:
                 challenge_started_at = (
                     time.monotonic()
@@ -793,6 +871,7 @@ class HeadedChromiumSession:
             title=title,
         )
 
+    
     def close(self):
         if self.websocket is not None:
             try:
@@ -850,7 +929,7 @@ class HeadedChromiumSession:
             self.profile_dir,
             ignore_errors=True,
         )
-        
+
 
 _browser_session = None
 
@@ -887,6 +966,17 @@ def fetch_browser_page(
             return _browser_session.fetch(
                 url
             )
+
+        except HumanVerificationRequired:
+            print(
+                "  Human verification "
+                "required; not retrying this "
+                "work."
+            )
+
+            close_browser_session()
+
+            raise
 
         except Exception as error:
             last_error = error

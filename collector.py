@@ -7,6 +7,7 @@ from urllib.parse import (
 )
 
 from browser_fetch import (
+    HumanVerificationRequired,
     close_browser_session,
     fetch_browser_page,
 )
