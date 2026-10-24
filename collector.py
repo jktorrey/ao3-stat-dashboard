@@ -1,7 +1,15 @@
 import time
 from datetime import date
 import re
-from urllib.parse import urljoin
+from urllib.parse import (
+    urlencode,
+    urljoin,
+)
+
+from browser_fetch import (
+    close_browser_session,
+    fetch_browser_page,
+)
 
 import requests
 from bs4 import BeautifulSoup
@@ -49,7 +57,8 @@ RETRYABLE_STATUSES = set(
 
 _consecutive_ssl_failures = 0
 _ssl_circuit_open = False
-
+_browser_fallback_active = False
+_browser_fallback_unavailable = False
 
 class AO3TransportUnavailable(
     RuntimeError
@@ -66,9 +75,15 @@ class AO3CircuitOpen(
 def reset_ao3_transport_state():
     global _consecutive_ssl_failures
     global _ssl_circuit_open
+    global _browser_fallback_active
+    global _browser_fallback_unavailable
+
+    close_browser_session()
 
     _consecutive_ssl_failures = 0
     _ssl_circuit_open = False
+    _browser_fallback_active = False
+    _browser_fallback_unavailable = False
 
 
 def record_ssl_failure(
@@ -120,8 +135,10 @@ def record_ssl_failure(
 
 def reset_ssl_failure_count():
     global _consecutive_ssl_failures
+    global _ssl_circuit_open
 
     _consecutive_ssl_failures = 0
+    _ssl_circuit_open = False
 
 
 def get_retry_delay(
@@ -148,6 +165,69 @@ def get_retry_delay(
     )
 
 
+def build_request_url(
+    url,
+    params=None,
+):
+    if not params:
+        return url
+
+    query = urlencode(
+        params,
+        doseq=True,
+    )
+
+    separator = (
+        "&"
+        if "?" in url
+        else "?"
+    )
+
+    return (
+        f"{url}"
+        f"{separator}"
+        f"{query}"
+    )
+
+
+def fetch_browser_fallback(url):
+    global _browser_fallback_active
+    global _browser_fallback_unavailable
+
+    if _browser_fallback_unavailable:
+        raise AO3TransportUnavailable(
+            "Headed Chromium fallback "
+            "is unavailable for this "
+            "collection cycle."
+        )
+
+    time.sleep(
+        REQUEST_DELAY_SECONDS
+    )
+
+    try:
+        page = fetch_browser_page(
+            url
+        )
+
+    except Exception as error:
+        _browser_fallback_active = False
+        _browser_fallback_unavailable = True
+
+        close_browser_session()
+
+        raise AO3TransportUnavailable(
+            "Headed Chromium fallback "
+            f"failed for {url}: {error}"
+        ) from error
+
+    _browser_fallback_active = True
+
+    reset_ssl_failure_count()
+
+    return page
+
+
 def fetch_ao3_page(
     url,
     params=None,
@@ -155,6 +235,23 @@ def fetch_ao3_page(
     read_timeout=None,
     max_attempts=None,
 ):
+    global _browser_fallback_active
+
+    request_url = build_request_url(
+        url,
+        params=params,
+    )
+
+    # Once headed Chromium succeeds during
+    # a cycle, keep using that same browser
+    # session instead of repeatedly trying
+    # the HTTP path that already returned
+    # 525/526.
+    if _browser_fallback_active:
+        return fetch_browser_fallback(
+            request_url
+        )
+
     if _ssl_circuit_open:
         raise AO3CircuitOpen(
             "AO3 request skipped because "
@@ -190,8 +287,7 @@ def fetch_ao3_page(
 
         try:
             response = requests.get(
-                url,
-                params=params,
+                request_url,
                 headers=HEADERS,
                 timeout=(
                     connect_timeout,
@@ -217,13 +313,13 @@ def fetch_ao3_page(
 
             raise RuntimeError(
                 f"AO3 request failed for "
-                f"{url}: {error}"
+                f"{request_url}: {error}"
             ) from error
 
         except requests.RequestException as error:
             raise RuntimeError(
                 f"AO3 request failed for "
-                f"{url}: {error}"
+                f"{request_url}: {error}"
             ) from error
 
         status_code = (
@@ -243,18 +339,42 @@ def fetch_ao3_page(
 
             response.close()
 
-            # 525/526 are deliberately not
-            # retried immediately. Cloudflare
-            # categorizes them as origin TLS
-            # failures rather than transient
-            # HTTP failures.
+            if not _browser_fallback_unavailable:
+                print(
+                    "  AO3 returned "
+                    f"{status_code}; switching "
+                    "this collection cycle to "
+                    "headed Chromium."
+                )
+
+                try:
+                    return (
+                        fetch_browser_fallback(
+                            request_url
+                        )
+                    )
+
+                except AO3TransportUnavailable as error:
+                    print(
+                        "  Headed Chromium "
+                        "fallback failed: "
+                        f"{error}"
+                    )
+
+                    raise AO3TransportUnavailable(
+                        f"{message} "
+                        "Headed Chromium "
+                        "fallback also failed: "
+                        f"{error}"
+                    ) from error
+
             raise AO3TransportUnavailable(
                 message
             )
 
-        # Any response other than 525/526
-        # proves that Cloudflare successfully
-        # completed the TLS path to AO3.
+        # Any ordinary response means the
+        # direct Cloudflare -> AO3 path is
+        # currently alive.
         reset_ssl_failure_count()
 
         if (
@@ -294,7 +414,7 @@ def fetch_ao3_page(
                 "AO3 returned "
                 f"{status_code} after "
                 f"{max_attempts} attempts "
-                f"for {url}."
+                f"for {request_url}."
             )
 
         try:
@@ -305,14 +425,14 @@ def fetch_ao3_page(
 
             raise RuntimeError(
                 f"AO3 request failed for "
-                f"{url}: {error}"
+                f"{request_url}: {error}"
             ) from error
 
         return response
 
     raise RuntimeError(
         f"AO3 request failed for "
-        f"{url}: {last_error}"
+        f"{request_url}: {last_error}"
     )
 
 

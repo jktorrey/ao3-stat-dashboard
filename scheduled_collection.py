@@ -8,6 +8,10 @@ from app_logging import (
     capture_output,
 )
 
+from browser_fetch import (
+    close_browser_session,
+)
+
 from collection_lock import (
     CollectionAlreadyRunning,
     collection_lock,
@@ -105,50 +109,53 @@ def run_collection_cycle(
     with collection_lock():
         reset_ao3_transport_state()
 
-        print(
-            f"Running {trigger} AO3 cycle..."
-        )
-        print()
-
-        print(
-            "Step 1: Collecting tracked works"
-        )
-        print()
+        collection_result = None
+        discovery_result = None
 
         try:
-            collection_result = (
-                collect_all_stats()
-            )
-
-        except Exception as error:
-            collection_result = None
-
             print(
-                "Collection encountered "
-                "an unexpected error: "
-                f"{error}"
+                f"Running {trigger} AO3 cycle..."
             )
             print()
 
-        print(
-            "Step 2: Checking for new works"
-        )
-        print()
-
-        try:
-            discovery_result = (
-                discover_and_add_new_works()
-            )
-
-        except Exception as error:
-            discovery_result = None
-
             print(
-                "Work discovery encountered "
-                "an unexpected error: "
-                f"{error}"
+                "Step 1: Collecting tracked works"
             )
             print()
+
+            try:
+                collection_result = (
+                    collect_all_stats()
+                )
+
+            except Exception as error:
+                print(
+                    "Collection encountered "
+                    "an unexpected error: "
+                    f"{error}"
+                )
+                print()
+
+            print(
+                "Step 2: Checking for new works"
+            )
+            print()
+
+            try:
+                discovery_result = (
+                    discover_and_add_new_works()
+                )
+
+            except Exception as error:
+                print(
+                    "Work discovery encountered "
+                    "an unexpected error: "
+                    f"{error}"
+                )
+                print()
+
+        finally:
+            close_browser_session()
 
         print(
             f"{trigger.capitalize()} "
@@ -261,7 +268,7 @@ def run_collection_cycle(
                     else None
                 ),
         }
-
+    
 
 def run():
     initialize_database()
