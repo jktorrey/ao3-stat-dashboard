@@ -15,7 +15,7 @@ from websockets.sync.client import connect
 BROWSER_START_TIMEOUT_SECONDS = 20
 PAGE_LOAD_TIMEOUT_SECONDS = 30
 DEVTOOLS_COMMAND_TIMEOUT_SECONDS = 30
-CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS = 20
+CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS = 60
 BROWSER_FETCH_ATTEMPTS = 2
 
 
@@ -425,12 +425,9 @@ class HeadedChromiumSession:
                 "Chromium."
             )
 
-        challenge_deadline = (
-            time.monotonic()
-            + CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS
-        )
-
-        challenge_detected = False
+        challenge_started_at = None
+        challenge_deadline = None
+        next_progress_message = 10
 
         while True:
             try:
@@ -440,7 +437,8 @@ class HeadedChromiumSession:
 
             except BrowserFetchError:
                 if (
-                    challenge_detected
+                    challenge_started_at
+                    is not None
                     and time.monotonic()
                     < challenge_deadline
                 ):
@@ -471,14 +469,38 @@ class HeadedChromiumSession:
             if not is_cloudflare_challenge:
                 break
 
-            if not challenge_detected:
-                challenge_detected = True
+            if challenge_started_at is None:
+                challenge_started_at = (
+                    time.monotonic()
+                )
+
+                challenge_deadline = (
+                    challenge_started_at
+                    + CLOUDFLARE_CHALLENGE_TIMEOUT_SECONDS
+                )
 
                 print(
                     "  Cloudflare browser "
                     "challenge detected; "
                     "waiting for it to clear..."
                 )
+
+            elapsed_seconds = int(
+                time.monotonic()
+                - challenge_started_at
+            )
+
+            if (
+                elapsed_seconds
+                >= next_progress_message
+            ):
+                print(
+                    "  Still waiting for "
+                    "Cloudflare challenge... "
+                    f"{elapsed_seconds} seconds"
+                )
+
+                next_progress_message += 10
 
             if (
                 time.monotonic()
@@ -494,6 +516,21 @@ class HeadedChromiumSession:
 
             time.sleep(
                 1
+            )
+
+        if (
+            challenge_started_at
+            is not None
+        ):
+            elapsed_seconds = int(
+                time.monotonic()
+                - challenge_started_at
+            )
+
+            print(
+                "  Cloudflare browser "
+                "challenge cleared after "
+                f"{elapsed_seconds} seconds."
             )
 
         final_page_deadline = (
@@ -586,6 +623,7 @@ class HeadedChromiumSession:
             title=title,
         )
 
+
     def close(self):
         if self.websocket is not None:
             try:
@@ -643,7 +681,7 @@ class HeadedChromiumSession:
             self.profile_dir,
             ignore_errors=True,
         )
-        
+
 
 _browser_session = None
 
